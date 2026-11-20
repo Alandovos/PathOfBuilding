@@ -66,7 +66,7 @@ Optimize Tree:
 Use "Optimize Tree" at the bottom of the Tree tab after loading a character.
 Choose balanced DPS/survival, maximize DPS, or configured survival, then press Start.
 Choose Full DPS to optimize skills included in Full DPS, or selected skill DPS for the current skill/minion.
-Balanced maximizes the product of relative DPS and configured survival score; it may sacrifice one to improve the other.
+Balanced requires both DPS and configured survival score to improve over the starting tree, then ranks those results by their relative product.
 Configured survival replaces hit-only EHP in the optimizer, not elsewhere in PoB.
 It runs a 30-second benchmark using configured enemy damage, attack/cast time and mitigation.
 The score integrates expected time alive weighted by remaining usable Life/Mana/ES buffer;

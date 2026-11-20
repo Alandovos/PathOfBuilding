@@ -122,6 +122,7 @@
         Each ratio is protected independently; 0% allows 0.5% starting-value tolerance but requires ratios of at least 1.
         All optimizer reduction sliders default to 0%. Unsafe starts are reported; positive reductions can relax the budget.
         The optimizer scores "Configured survival" instead of legacy `TotalEHP`; ordinary PoB EHP is unchanged.
+        Balanced accepts only improvements to both starting DPS and configured survival score, ranked by their relative product.
         A 30-second recovery-aware benchmark integrates survival probability times remaining usable Life/Mana/ES buffer.
         Mean time alive is reported separately and is capped by the benchmark, not a promise of infinite survival.
         It branches complete configured hits for avoidance/block/suppression, then uses native damage-to-pool routing.

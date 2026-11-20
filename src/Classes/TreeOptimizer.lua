@@ -76,10 +76,15 @@ function TreeOptimizer.new(spec, calculate, goal, depth, dpsStat, constraints)
 end
 
 function TreeOptimizer:Restore(allocation, masteries)
+	local restored = { }
+	for id in pairs(allocation) do
+		-- Cluster graph rebuilds replace node objects, including those in saved allocations.
+		restored[id] = assert(self.spec.nodes[id], "Cannot restore missing passive: "..id)
+	end
 	for _, node in pairs(self.spec.nodes) do
 		node.alloc = allocation[node.id] ~= nil
 	end
-	self.spec.allocNodes = copyTable(allocation, true)
+	self.spec.allocNodes = restored
 	self.spec.masterySelections = copyTable(masteries)
 	self.spec:BuildAllDependsAndPaths()
 end
@@ -108,6 +113,11 @@ function TreeOptimizer:IsValid()
 	end
 	local effects = { }
 	for id, node in pairs(self.spec.allocNodes) do
+		if node ~= self.spec.nodes[id] or not node.alloc
+			or node.type ~= "ClassStart" and node.type ~= "AscendClassStart"
+			and not node.connectedToStart and #node.intuitiveLeapLikesAffecting == 0 then
+			return false
+		end
 		if node.type == "Mastery" and node.masteryEffects and #node.masteryEffects > 0 and not self.spec.hashOverrides[id] then
 			local effect = self.spec.masterySelections[id]
 			local allowed, accessible = false, false
@@ -290,7 +300,12 @@ function TreeOptimizer:Score(metrics)
 	elseif self.goal == "EHP" then
 		return metrics.dps >= self.base.dps * minimumMetricRatio and metrics.ehp / self.base.ehp or -math.huge
 	end
-	-- Keep the EHP goal key, but give DPS and recovery-aware survival equal relative weight.
+	if metrics == self.base then
+		return 0
+	elseif metrics.dps <= self.base.dps or metrics.ehp <= self.base.ehp then
+		return -math.huge
+	end
+	-- Rank joint improvements with equal relative weight for DPS and configured survival.
 	return math.log(metrics.dps / self.base.dps) + math.log(metrics.ehp / self.base.ehp)
 end
 
@@ -372,7 +387,8 @@ function TreeOptimizer:Run()
 		end
 		self:Restore(current, currentMasteries)
 		local removals = { }
-		for id, node in pairs(current) do
+		for id in pairs(current) do
+			local node = self.spec.nodes[id]
 			local used, ascendancyUsed = self.spec:CountAllocNodes(node.depends)
 			local cost = used + ascendancyUsed
 			if TreeOptimizer.CanChange(node, self.spec) and cost > 0 and cost <= self.depth then

@@ -191,12 +191,16 @@ Added Small Passive Skills grant: 12% increased Fire Damage
 		error("Reliquarian relic choice is missing")
 	end
 
-	it("balances relative DPS and EHP on a separate tree", function()
+	it("requires both DPS and configured survival to improve in Balanced mode on a separate tree", function()
 		local source = build.spec
-		local optimizer = search("BALANCED", 150, 80)
+		assert(search("BALANCED", 150, 80).improvements == 0)
+		assert(search("BALANCED", 80, 150).improvements == 0)
+		assert(search("BALANCED", 150, 100).improvements == 0)
+		assert(search("BALANCED", 100, 150).improvements == 0)
+		local optimizer = search("BALANCED", 120, 110)
 		assert(optimizer.spec.allocNodes[alternative.id])
 		assert(not optimizer.spec.allocNodes[first.id])
-		assert(optimizer.bestMetrics.dps == 150 and optimizer.bestMetrics.ehp == 80)
+		assert(optimizer.bestMetrics.dps == 120 and optimizer.bestMetrics.ehp == 110)
 		assert(build.spec == source and source.allocNodes[first.id] and not source.allocNodes[alternative.id])
 		assert(optimizer.tested > 0)
 	end)
@@ -773,6 +777,70 @@ Implicits: 0
 		assert(optimizer.improvements == 0 and optimizer.spec.allocNodes[target.id])
 	end)
 
+	it("restores canonical cluster nodes and travel dependencies after a graph rebuild", function()
+		local _, _, graph = socketFireCluster()
+		local target
+		for _, node in ipairs(graph.nodes) do
+			if node.type == "Notable" and (not target or #node.path < #target.path) then
+				target = node
+			end
+		end
+		assert(target and #target.path > 1)
+		build.spec:AllocNode(target)
+		build.spec.optimizerLocks[target.id] = true
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		local allocation, masteries = copyTable(optimizer.best, true), copyTable(optimizer.bestMasteries)
+		optimizer.spec:BuildClusterJewelGraphs()
+		optimizer.spec.allocNodes = copyTable(allocation, true)
+		assert(not optimizer:IsValid(), "Stale allocated objects must not pass validation")
+		optimizer:Restore(allocation, masteries)
+		assert(optimizer:IsValid())
+		for id, node in pairs(optimizer.spec.allocNodes) do
+			assert(node == optimizer.spec.nodes[id], "Restored allocation retained a stale cluster node")
+			assert(node.alloc, "Restored allocation disagrees with graph")
+		end
+		local entrance = optimizer.spec.nodes[graph.entranceNode.id]
+		assert(isValueInArray(entrance.depends, optimizer.spec.nodes[target.id]), "Cluster travel lost its locked dependent")
+		optimizer.calculate = function(override)
+			return feasibleOutput({ CombinedDPS = not override.spec.allocNodes[entrance.id] and 200 or 100 })
+		end
+		finish(optimizer)
+		assert(optimizer.spec.allocNodes[entrance.id] and optimizer.spec.allocNodes[target.id])
+		assert(optimizer.improvements == 0)
+	end)
+
+	it("keeps cluster travel connected while refunding an empty socket rebuilds the graph", function()
+		local _, _, graph = socketFireCluster()
+		local target, emptySocket
+		for _, node in ipairs(graph.nodes) do
+			if node.type == "Notable" and (not target or #node.path < #target.path) then
+				target = node
+			elseif node.type == "Socket" then
+				emptySocket = node
+			end
+		end
+		assert(target and emptySocket)
+		local targetId, emptySocketId, entranceId = target.id, emptySocket.id, graph.entranceNode.id
+		build.spec:AllocNode(target)
+		build.spec:AllocNode(build.spec.nodes[emptySocketId])
+		lockAllocated()
+		build.spec.optimizerLocks[emptySocketId] = nil
+		build.spec.optimizerLocks[entranceId] = nil
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		optimizer.calculate = function(override)
+			local spec = override.spec
+			assert(spec.allocNodes[targetId] and spec.allocNodes[entranceId], "Cluster travel was disconnected")
+			for id, node in pairs(spec.allocNodes) do
+				assert(node == spec.nodes[id] and node.alloc, "Candidate contains a stale allocation")
+			end
+			return feasibleOutput({ CombinedDPS = not spec.allocNodes[emptySocketId] and 200 or 100 })
+		end
+		finish(optimizer)
+		assert(optimizer.improvements > 0 and not optimizer.spec.allocNodes[emptySocketId])
+		assert(optimizer.spec.allocNodes[targetId] and optimizer.spec.allocNodes[entranceId])
+		assert(build.spec.allocNodes[emptySocketId], "Original tree must not change")
+	end)
+
 	for _, clustered in ipairs({ false, true }) do
 		for _, zeroId in ipairs({ false, true }) do
 			it("adds and refunds an empty " .. (clustered and "cluster" or "main-tree") .. " socket with " .. (zeroId and "zero" or "no") .. " item ID", function()
@@ -1088,6 +1156,7 @@ Adds Hollow Palm Technique]])
 				local output = feasibleOutput()
 				if override.spec.allocNodes[alternative.id] then
 					output.CombinedDPS = 200
+					output.ConfiguredSurvivalScore = 200
 					for key, value in pairs(case.invalid) do
 						output[key] = value
 					end
@@ -1100,7 +1169,8 @@ Adds Hollow Palm Technique]])
 		local allOptions = { elementalRes = "CAP", chaosRes = "CAP", block = "CAP", suppression = "CAP", ailmentAvoidance = "CAP", maxHit = true }
 		local optimizer = build.treeTab:CreateTreeOptimizer("BALANCED", 1, "CombinedDPS", allOptions)
 		optimizer.calculate = function(override)
-			return feasibleOutput({ CombinedDPS = override.spec.allocNodes[alternative.id] and 200 or 100 })
+			local chosen = override.spec.allocNodes[alternative.id]
+			return feasibleOutput({ CombinedDPS = chosen and 200 or 100, ConfiguredSurvivalScore = chosen and 200 or 100 })
 		end
 		assert(finish(optimizer).bestMetrics.dps == 200)
 	end)
@@ -1340,9 +1410,11 @@ Adds Hollow Palm Technique]])
 	it("can find a feasible result from an infeasible start without returning invalid trees", function()
 		local optimizer = build.treeTab:CreateTreeOptimizer("BALANCED", 1, "CombinedDPS", { suppression = true })
 		optimizer.calculate = function(override)
+			local chosen = override.spec.allocNodes[alternative.id]
 			return feasibleOutput({
-				CombinedDPS = 100,
-				SpellSuppressionChance = override.spec.allocNodes[alternative.id] and 100 or 99,
+				CombinedDPS = chosen and 110 or 100,
+				ConfiguredSurvivalScore = chosen and 110 or 100,
+				SpellSuppressionChance = chosen and 100 or 99,
 			})
 		end
 		finish(optimizer)
@@ -1494,6 +1566,7 @@ Adds Hollow Palm Technique]])
 		local count = #build.treeTab.specList
 		build.treeTab:OpenOptimizerPopup()
 		local popup = main.popups[1]
+		popup.controls.goal.selIndex = 2
 		popup.controls.castingHeadroom:SetVal(1)
 		popup.controls.start:Click()
 		local frames = 0

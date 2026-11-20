@@ -738,7 +738,7 @@ function TreeTabClass:OpenOptimizerPopup()
 	controls.maxHit.labelRight = true
 	controls.status = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 386, 0, 14 }, function()
 		if not optimizer then
-			return "^7Ready. Balanced maximizes DPS x survival score; either may fall.\nRecovery-aware 30-second benchmark uses configured enemy pressure.\nSingle-metric goals allow up to 0.5% loss in the other starting metric.\nOnly feasible results can be applied. Search is local, not global."
+			return "^7Ready. Balanced requires both starting DPS and survival score to improve.\nRecovery-aware 30-second benchmark uses configured enemy pressure.\nSingle-metric goals allow up to 0.5% loss in the other starting metric.\nOnly feasible results can be applied. Search is local, not global."
 		elseif optimizer.failed then
 			return "^1Search failed. Original tree unchanged; see the error message."
 		elseif not optimizer.base then
