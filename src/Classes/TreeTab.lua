@@ -672,8 +672,8 @@ function TreeTabClass:OpenOptimizerPopup()
 	local source = self.build.spec
 	local goals = {
 		{ label = "Balanced DPS and EHP", value = "BALANCED" },
-		{ label = "DPS, no EHP loss", value = "DPS" },
-		{ label = "EHP, no DPS loss", value = "EHP" },
+		{ label = "DPS, up to 0.5% EHP loss", value = "DPS" },
+		{ label = "EHP, up to 0.5% DPS loss", value = "EHP" },
 	}
 	controls.info = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 20, 0, 14 },
 		"Reallocates existing points; saves a separate tree. Larger swaps take longer.\nMasteries, ascendancies, sockets and cluster nodes stay fixed.\nAlt + right-click nodes on the tree to lock/unlock requirements.\nMana/life reservation and item/gem attribute requirements are always enforced.")
@@ -715,7 +715,7 @@ function TreeTabClass:OpenOptimizerPopup()
 	controls.maxHit.labelRight = true
 	controls.status = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 358, 0, 14 }, function()
 		if not optimizer then
-			return "Ready. Balanced maximizes DPS x EHP; either metric may fall.\nSingle-metric goals keep the other metric at least at its starting value.\nOnly feasible results can be applied. Search is local, not a global optimum."
+			return "Ready. Balanced maximizes DPS x EHP; either metric may fall.\nSingle-metric goals allow up to 0.5% loss in the other starting metric.\nOnly feasible results can be applied. Search is local, not a global optimum."
 		elseif optimizer.failed then
 			return "^1Search failed. Original tree unchanged; see the error message."
 		elseif not optimizer.base then

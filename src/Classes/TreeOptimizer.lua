@@ -3,6 +3,7 @@
 -- Fixed-budget local search over connected passive branch exchanges.
 local TreeOptimizer = { }
 TreeOptimizer.__index = TreeOptimizer
+local minimumMetricRatio = 0.995
 
 function TreeOptimizer.CanChange(node, spec)
 	local original = spec.tree.nodes[node.id]
@@ -184,9 +185,9 @@ end
 
 function TreeOptimizer:Score(metrics)
 	if self.goal == "DPS" then
-		return metrics.ehp >= self.base.ehp and metrics.dps / self.base.dps or -math.huge
+		return metrics.ehp >= self.base.ehp * minimumMetricRatio and metrics.dps / self.base.dps or -math.huge
 	elseif self.goal == "EHP" then
-		return metrics.dps >= self.base.dps and metrics.ehp / self.base.ehp or -math.huge
+		return metrics.dps >= self.base.dps * minimumMetricRatio and metrics.ehp / self.base.ehp or -math.huge
 	end
 	-- Log ratios give DPS and EHP equal relative weight without multiplying huge outputs.
 	return math.log(metrics.dps / self.base.dps) + math.log(metrics.ehp / self.base.ehp)
