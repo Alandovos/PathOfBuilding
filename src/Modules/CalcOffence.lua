@@ -341,6 +341,115 @@ function calcs.calcTotemLife(env, activeSkill)
 	return life, lifeMod
 end
 
+-- Estimate repeated preloaded mine sequences, including overlap and the slower of supply/detonation.
+local function calcMineSequence(activeSkill, output, breakdown)
+	local skillData = activeSkill.skillData
+	local skillModList = activeSkill.skillModList
+	local skillCfg = activeSkill.skillCfg
+	local mineLimit = m_max(0, m_floor(output.ActiveMineLimit))
+	local mineCount = m_min(mineLimit, m_max(1, m_floor(skillData.mineSequenceCount or mineLimit)))
+	local enemyRadius = skillModList:Override(skillCfg, "EnemyRadius") or skillModList:Sum("BASE", skillCfg, "EnemyRadius")
+	local explosionRadius = output.AreaOfEffectRadiusTertiary
+	local spreadRadius = output.AreaOfEffectRadiusSecondary
+	local hitRadius = m_max(0, explosionRadius + enemyRadius - 1)
+	-- As with Explosive Trap, assume uniform-area landings and integer collision coordinates.
+	local overlapChance = explosionRadius > 0 and (spreadRadius == 0 and 1 or m_min(1, hitRadius ^ 2 / spreadRadius ^ 2)) or 0
+	local detonationMod = m_max(0, calcLib.mod(skillModList, skillCfg, "MineDetonationSpeed"))
+	local detonationTime = detonationMod > 0 and skillData.mineDetonationTime / detonationMod or m_huge
+	local detonateSkill = data.skills.GemDetonateMines
+	local detonateStats = calcLib.buildSkillInstanceStats({ level = 1, quality = 0 }, detonateSkill)
+	local acceleration = detonateStats["display_mine_deontation_mechanics_detonation_speed_+%_final_per_sequence_mine"] / 100
+	local projectileBase = skillModList:Sum("BASE", skillCfg, "ProjectileCount")
+	local projectileMore = skillModList:More(skillCfg, "ProjectileCount")
+	local projectileMin = skillModList:Sum("BASE", skillCfg, "ProjectileCountMinimum")
+	local projectileMax = skillModList:Override(skillCfg, "ProjectileCountMaximum") or m_huge
+	local singleProjectile = skillModList:Flag(skillCfg, "NoAdditionalProjectiles") or skillModList:Flag(skillCfg, "SingleProjectile")
+	local projectileTotal, sequenceTime = 0, 0
+	local rows = { }
+	for mine = 1, mineCount do
+		local additionalProjectiles = m_floor((mine - 1) / skillData.minesPerAdditionalProjectile)
+		local projectiles = singleProjectile and 1 or m_max(projectileMin, m_min(projectileMax, m_floor((projectileBase + additionalProjectiles) * projectileMore)))
+		local delay = mine == 1 and 0 or detonationTime / (1 + acceleration * (mine - 2))
+		projectileTotal = projectileTotal + projectiles
+		sequenceTime = sequenceTime + delay
+		if breakdown then
+			t_insert(rows, {
+				mine = mine,
+				projectiles = projectiles,
+				delay = s_format("%.3fs", delay),
+				time = s_format("%.3fs", sequenceTime),
+			})
+		end
+	end
+	local averageProjectiles = mineCount > 0 and projectileTotal / mineCount or 0
+	local initialHit = output.AreaOfEffectRadius > 0 and 1 or 0
+	local hitsPerMine = initialHit + averageProjectiles * overlapChance
+	-- Restarting a one-mine sequence is still limited by the Detonate Mines action cooldown.
+	local detonationRate = mineCount / m_max(detonateSkill.levels[1].cooldown, sequenceTime)
+	local throwingRate = output.MineLayingSpeed * output.MineThrowCount
+	local mineRate = m_min(throwingRate, detonationRate)
+	skillData.timeOverride = mineRate > 0 and 1 / mineRate or m_huge
+	skillData.dpsMultiplier = (skillData.dpsMultiplier or 1) * hitsPerMine
+	activeSkill.infoMessage = "Estimated sequence DPS with automatic overlap (mines centred on enemy)"
+	output.OverlapChance = overlapChance * 100
+	output.SkillDPSMultiplier = (output.SkillDPSMultiplier or 1) * hitsPerMine
+	output.MineSequenceCount = mineCount
+	output.MineSequenceAverageProjectiles = averageProjectiles
+	output.MineSequenceTime = sequenceTime
+	output.MineDetonationTime = detonationTime
+	output.MineDetonationRate = detonationRate
+	output.MineEffectiveRate = mineRate
+	if breakdown then
+		breakdown.OverlapChance = {
+			"Estimate assumes uniform-area projectile landings and a stationary enemy centred on each mine.",
+			"Exact Pyroclast projectile landing distribution has not been verified from game files.",
+			"Chance = min(1, (projectile explosion radius + enemy radius - 1)^2 / spread radius^2)",
+			s_format("= min(1, (%g + %g - 1)^2 / %g^2)", explosionRadius, enemyRadius, spreadRadius),
+			s_format("= %.2f%%", output.OverlapChance),
+		}
+		breakdown.SkillDPSMultiplier = {
+			"Average hits per mine = initial explosion + average projectiles * overlap chance",
+			s_format("= %d + %.3f * %.4f = %.3f", initialHit, averageProjectiles, overlapChance, hitsPerMine),
+		}
+		breakdown.MineSequenceCount = {
+			s_format("%d mines (defaults to the active mine limit; configurable, capped at that limit)", mineCount),
+			"Models repeated preloaded sequences with concurrent throwing and detonation.",
+			"Does not simulate continued throws extending a sequence, mine expiry, re-arming, or projectile flight time.",
+		}
+		breakdown.MineSequenceAverageProjectiles = {
+			s_format("Each mine fires an additional projectile for every %d prior mines.", skillData.minesPerAdditionalProjectile),
+			s_format("%d total projectiles / %d mines = %.3f projectiles per mine", projectileTotal, mineCount, averageProjectiles),
+			colList = {
+				{ label = "Mine", key = "mine" },
+				{ label = "Projectiles", key = "projectiles" },
+				{ label = "Delay", key = "delay" },
+				{ label = "Elapsed", key = "time" },
+			},
+			rowList = rows,
+		}
+		breakdown.MineDetonationTime = {
+			s_format("%.3fs (base detonation time)", skillData.mineDetonationTime),
+			s_format("/ %.3f (detonation speed modifier)", detonationMod),
+			s_format("= %.3fs before sequence acceleration", detonationTime),
+			"The first mine detonates instantly; the second uses this interval.",
+		}
+		breakdown.MineSequenceTime = {
+			"Time from first to last mine detonation; excludes projectile travel time.",
+			s_format("First mine: instant. Later intervals: detonation time / (1 + %.2f * (mine number - 2))", acceleration),
+			s_format("= %.3fs", sequenceTime),
+		}
+		breakdown.MineDetonationRate = {
+			s_format("%d mines / max(%.3fs sequence time, %.3fs Detonate Mines cooldown)", mineCount, sequenceTime, detonateSkill.levels[1].cooldown),
+			s_format("= %.3f mines per second", detonationRate),
+		}
+		breakdown.MineEffectiveRate = {
+			s_format("%.3f throws per second * %.3f mines per throw = %.3f mines supplied per second", output.MineLayingSpeed, output.MineThrowCount, throwingRate),
+			s_format("%.3f mines detonated per second", detonationRate),
+			s_format("= %.3f mines per second (lower of supply and detonation rates)", mineRate),
+		}
+	end
+end
+
 -- Performs all offensive calculations
 ---@param env Env
 ---@param actor Actor
@@ -1411,6 +1520,9 @@ function calcs.offence(env, actor, activeSkill)
 				local incAreaBreakpoint, moreAreaBreakpoint, redAreaBreakpoint, lessAreaBreakpoint = calcRadiusBreakpoints(data.misc.MineAuraRadiusBase, incArea, moreArea)
 				breakdown.MineAuraRadius = breakdown.area(data.misc.MineAuraRadiusBase, output.AreaOfEffectMod, output.MineAuraRadius, incAreaBreakpoint, moreAreaBreakpoint, redAreaBreakpoint, lessAreaBreakpoint)
 			end
+		end
+		if skillData.mineSequence then
+			calcMineSequence(activeSkill, output, breakdown)
 		end
 	end
 	if skillFlags.totem then
@@ -3843,6 +3955,15 @@ function calcs.offence(env, actor, activeSkill)
 		globalOutput.AverageBurstDamage = output.AverageDamage + output.AverageDamage * (globalOutput.AverageBurstHits - 1) * repeatPenalty or 0
 		globalOutput.ShowBurst = globalOutput.AverageBurstHits > 1
 		output.TotalDPS = output.AverageDamage * (globalOutput.HitSpeed or globalOutput.Speed) * skillData.dpsMultiplier * quantityMultiplier
+		if skillData.mineSequence then
+			output.MineSequenceDamage = output.AverageDamage * output.SkillDPSMultiplier * output.MineSequenceCount
+			if breakdown then
+				breakdown.MineSequenceDamage = {
+					s_format("%.3f average damage per hit * %.3f average hits per mine * %d mines", output.AverageDamage, output.SkillDPSMultiplier, output.MineSequenceCount),
+					s_format("= %.1f expected hit damage per sequence (excludes ailments)", output.MineSequenceDamage),
+				}
+			end
+		end
 		if breakdown then
 			if output.CritEffect ~= 1 then
 				breakdown.AverageHit = { }

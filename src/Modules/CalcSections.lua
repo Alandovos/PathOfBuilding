@@ -864,6 +864,13 @@ return {
 		{ modName = "SealGainFrequency", cfg = "skill" }, 
 	}, },
 	-- Mines
+	{ label = "Sequence Mines", haveOutput = "MineSequenceCount", { format = "{0:output:MineSequenceCount}", { breakdown = "MineSequenceCount" }, }, },
+	{ label = "Avg. Proj. / Mine", haveOutput = "MineSequenceAverageProjectiles", { format = "{3:output:MineSequenceAverageProjectiles}", { breakdown = "MineSequenceAverageProjectiles" }, }, },
+	{ label = "Detonation Time", haveOutput = "MineDetonationTime", { format = "{3:output:MineDetonationTime}s", { breakdown = "MineDetonationTime" }, { modName = "MineDetonationSpeed", cfg = "skill" }, }, },
+	{ label = "Sequence Time", haveOutput = "MineSequenceTime", { format = "{3:output:MineSequenceTime}s", { breakdown = "MineSequenceTime" }, }, },
+	{ label = "Detonation Rate", haveOutput = "MineDetonationRate", { format = "{3:output:MineDetonationRate}/s", { breakdown = "MineDetonationRate" }, }, },
+	{ label = "Effective Mine Rate", haveOutput = "MineEffectiveRate", { format = "{3:output:MineEffectiveRate}/s", { breakdown = "MineEffectiveRate" }, }, },
+	{ label = "Sequence Hit Damage", haveOutput = "MineSequenceDamage", { format = "{1:output:MineSequenceDamage}", { breakdown = "MineSequenceDamage" }, }, },
 	{ label = "Active Mine Limit", flag = "mine", { format = "{0:output:ActiveMineLimit}", { modName = "ActiveMineLimit", cfg = "skill" }, }, },
 	{ label = "Mine Throw Rate", flag = "mine", { format = "{2:output:MineLayingSpeed}", 
 		{ breakdown = "MineLayingTime" },

@@ -3460,11 +3460,16 @@ return function(skills, mod, flag, skill)
 
 #skill PyroclastMine
 #flags spell area projectile mine
+	parts = {
+		{ name = "Average Sequence (Automatic Overlap)", },
+		{ name = "Single Hit", },
+	},
 	statMap = {
 		["pyroclast_mine_aura_fire_exposure_%_to_apply"] = {
 			mod("FireExposure", "BASE", nil, 0, 0, { type = "GlobalEffect", effectType = "AuraDebuff", effectName = "Pyroclast Mine Fire Exposure" }),
 		},
 	},
+#baseMod skill("mineSequence", true, { type = "SkillPart", skillPart = 1 })
 #baseMod skill("radius", 20)
 #baseMod skill("radiusLabel", "Area of initial explosion:")
 #baseMod skill("radiusSecondary", 26)
@@ -3475,11 +3480,16 @@ return function(skills, mod, flag, skill)
 
 #skill PyroclastMineAltX
 #flags spell area projectile mine
+	parts = {
+		{ name = "Average Sequence (Automatic Overlap)", },
+		{ name = "Single Hit", },
+	},
 	statMap = {
 		["pyroclast_mine_aura_fire_exposure_%_to_apply"] = {
 			mod("FireExposure", "BASE", nil, 0, 0, { type = "GlobalEffect", effectType = "AuraDebuff", effectName = "Pyroclast Mine Fire Exposure" }),
 		},
 	},
+#baseMod skill("mineSequence", true, { type = "SkillPart", skillPart = 1 })
 #baseMod skill("radius", 20)
 #baseMod skill("radiusLabel", "Area of initial explosion:")
 #baseMod skill("radiusSecondary", 26)

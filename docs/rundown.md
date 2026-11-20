@@ -90,6 +90,15 @@
     * **CalcBreakdown.lua**
     * **CalcDefence.lua**
     * **CalcOffence.lua**
+        Pyroclast Mine and its Sabotage variant default to "Average Sequence (Automatic Overlap)"; "Single Hit" retains the previous per-hit, throwing-rate-based calculation without overlap.
+        The sequence estimate adds one initial hit to the expected overlapping projectile hits per mine, using the existing explosion/spread radii and enemy size.
+        Like Explosive Trap, it assumes uniform-area landings and integer collision coordinates. Pyroclast's exact landing distribution is not verified from raw game files.
+        Projectile counts increase for every three prior mines, with projectile modifiers and rounding applied separately to each mine.
+        Sequence length defaults to the active mine limit and can be reduced in Configuration. The model assumes repeated preloaded sequences with concurrent throwing and detonation;
+        effective mine rate is the lower of mine supply and sequence detonation throughput. The first mine is instant, subsequent intervals accelerate by 10% per preceding interval,
+        and sequence restarts respect the Detonate Mines action's base cooldown. It is an estimate, not a simulation of continued throws extending a sequence.
+        Mine expiry, resource availability, re-arming, enemy movement, and projectile travel time are not simulated. Calcs shows overlap, per-mine projectiles, sequence timing, rate limits, and expected sequence hit damage.
+        References: [GGG 3.27 patch notes](https://www.pathofexile.com/forum/view-thread/3869068), [mine detonation mechanics](https://www.poewiki.net/wiki/Mine#Detonating_mines).
     * **CalcPerform.lua**
     * **Calcs.lua**
         Loads other calcs modules.

@@ -13,6 +13,156 @@ describe("TestOffence", function()
 			string.format("%s: expected ~%.2f (within %.1f%%), got %.2f", msg, expected, tolerance * 100, actual))
 	end
 
+	describe("Pyroclast Mine automatic modeling", function()
+		local function update(config)
+			for key, value in pairs(config or { }) do
+				build.configTab.input[key] = value
+			end
+			build.configTab:BuildModList()
+			runCallback("OnFrame")
+			return build.calcsTab.mainOutput
+		end
+
+		for _, name in ipairs({ "Pyroclast Mine", "Pyroclast Mine of Sabotage" }) do
+			it("calculates " .. name .. " overlap, sequence projectiles and Full DPS automatically", function()
+				build.skillsTab:PasteSocketGroup(name .. " 20/0  1")
+				build.skillsTab.socketGroupList[1].includeInFullDPS = true
+				local output = update({ enemySizePreset = "Medium" })
+
+				assert.are.equals(15, output.MineSequenceCount)
+				assert.are.equals(5, output.MineSequenceAverageProjectiles)
+				assert.near(100 * 14 ^ 2 / 26 ^ 2, output.OverlapChance, 0.000001)
+				assert.near(1 + 5 * 14 ^ 2 / 26 ^ 2, output.SkillDPSMultiplier, 0.000001)
+				assert.near(output.AverageDamage * output.SkillDPSMultiplier * output.Speed, output.TotalDPS, 0.000001)
+				assert.near(output.CombinedDPS, output.FullDPS, 0.000001)
+				assert.near(output.AverageDamage * output.SkillDPSMultiplier * 15, output.MineSequenceDamage, 0.000001)
+				assert.is_falsy(build.calcsTab.mainEnv.player.mainSkill.skillFlags.showAverage)
+			end)
+		end
+
+		it("uses prior mines rather than the current mine for Pyroclast sequence breakpoints", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			for _, case in ipairs({
+				{ mines = 1, projectiles = 3 },
+				{ mines = 3, projectiles = 3 },
+				{ mines = 4, projectiles = 3.25 },
+				{ mines = 6, projectiles = 3.5 },
+				{ mines = 7, projectiles = 26 / 7 },
+			}) do
+				local output = update({ pyroclastMineSequenceCount = case.mines })
+				assert.near(case.projectiles, output.MineSequenceAverageProjectiles, 0.000001)
+			end
+			assert.are.equals(15, update({ pyroclastMineSequenceCount = 100 }).MineSequenceCount)
+			assert.are.equals(1, update({ pyroclastMineSequenceCount = -1 }).MineSequenceCount)
+		end)
+
+		it("accounts for Pyroclast quality and additional projectiles without assuming every projectile hits", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/20  1")
+			local output = update({ customMods = "Skills fire 2 additional Projectiles" })
+			assert.are.equals(8, output.MineSequenceAverageProjectiles)
+			assert.near(1 + 8 * 14 ^ 2 / 26 ^ 2, output.SkillDPSMultiplier, 0.000001)
+		end)
+
+		it("rounds Pyroclast projectile multipliers separately for each mine", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			local output = update({ pyroclastMineSequenceCount = 4, customMods = "50% more Projectiles" })
+			assert.near(4.5, output.MineSequenceAverageProjectiles, 0.000001)
+		end)
+
+		it("recalculates Pyroclast overlap for area modifiers and caps it for large enemies", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			local output = update({ customMods = "100% increased Area of Effect", enemySizePreset = "Medium" })
+			assert.near(25, output.OverlapChance, 0.000001)
+			assert.near(2.25, output.SkillDPSMultiplier, 0.000001)
+			output = update({ enemyRadius = 100 })
+			assert.are.equals(100, output.OverlapChance)
+			assert.are.equals(6, output.SkillDPSMultiplier)
+		end)
+
+		it("limits Pyroclast DPS by throwing and detonation instead of multiplying the two rates", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			local output = update({ pyroclastMineSequenceCount = 4 })
+			local baseDamage = output.AverageDamage
+			local baseRate = output.MineEffectiveRate
+			local expectedSequenceTime = 0.35 + 0.35 / 1.1 + 0.35 / 1.2
+			assert.near(expectedSequenceTime, output.MineSequenceTime, 0.000001)
+			assert.near(output.MineLayingSpeed * output.MineThrowCount, baseRate, 0.000001)
+			output = update({ customMods = "Mines have 100% increased Detonation Speed" })
+			assert.near(baseRate, output.MineEffectiveRate, 0.000001)
+			assert.near(expectedSequenceTime / 2, output.MineSequenceTime, 0.000001)
+			output = update({ customMods = "Mines have 20% increased Detonation Speed" })
+			assert.near(expectedSequenceTime / 1.2, output.MineSequenceTime, 0.000001)
+			output = update({ customMods = "1000% increased Mine Throwing Speed" })
+			local detonationLimitedDPS = output.TotalDPS
+			assert.near(4 / expectedSequenceTime, output.MineEffectiveRate, 0.000001)
+			output = update({ customMods = "1000% increased Mine Throwing Speed\nMines have 100% increased Detonation Speed" })
+			assert.near(2 * detonationLimitedDPS, output.TotalDPS, 0.000001)
+			assert.near(baseDamage, output.AverageDamage, 0.000001)
+		end)
+
+		it("includes additional mines per throw in the Pyroclast supply limit", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1\nMinefield 20/0  1")
+			local output = update({ customMods = "Mines have 1000% increased Detonation Speed" })
+			assert.is_true(output.MineThrowCount > 1)
+			assert.near(output.MineLayingSpeed * output.MineThrowCount, output.MineEffectiveRate, 0.000001)
+		end)
+
+		it("applies Detonate Mines quality to Pyroclast detonation speed", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/20  1")
+			local output = update({ pyroclastMineSequenceCount = 4, customMods = "1000% increased Mine Throwing Speed" })
+			assert.near(0.35 / 1.2, output.MineDetonationTime, 0.000001)
+			output = update({ customMods = "1000% increased Mine Throwing Speed\n100% increased Effect of Buffs on you" })
+			assert.near(0.35 / 1.2, output.MineDetonationTime, 0.000001)
+		end)
+
+		it("respects the Detonate Mines cooldown for a single-mine Pyroclast sequence", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			local output = update({ pyroclastMineSequenceCount = 1, customMods = "1000% increased Mine Throwing Speed" })
+			assert.are.equals(0, output.MineSequenceTime)
+			assert.near(5, output.MineEffectiveRate, 0.000001)
+		end)
+
+		it("does not produce invalid Pyroclast DPS when detonation speed is reduced to zero", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			local output = update({ pyroclastMineSequenceCount = 4, customMods = "Mines have 100% reduced Detonation Speed" })
+			assert.are.equals(0, output.MineEffectiveRate)
+			assert.are.equals(0, output.TotalDPS)
+		end)
+
+		it("preserves Pyroclast single-hit mode and does not leak sequence multipliers when switching modes", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			update()
+			local gem = build.skillsTab.socketGroupList[1].gemList[1]
+			gem.skillPart = 2
+			build.buildFlag = true
+			local output = update()
+			assert.is_nil(output.MineSequenceCount)
+			assert.near(output.AverageDamage * output.MineLayingSpeed * output.MineThrowCount, output.TotalDPS, 0.000001)
+			gem.skillPart = 1
+			build.buildFlag = true
+			output = update()
+			assert.near(1 + 5 * 14 ^ 2 / 26 ^ 2, output.SkillDPSMultiplier, 0.000001)
+		end)
+
+		it("shows Pyroclast configuration and Calcs details and preserves the estimate after saving", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/20  1")
+			local output = update({ pyroclastMineSequenceCount = 4, enemySizePreset = "Large" })
+			local expectedDPS = output.TotalDPS
+			build.viewMode = "CONFIG"
+			runCallback("OnFrame")
+			assert.is_true(build.configTab.varControls.pyroclastMineSequenceCount.shown())
+			assert.is_true(build.configTab.varControls.enemySizePreset.shown())
+			build.viewMode = "CALCS"
+			runCallback("OnFrame")
+			assert.are.equals(4, #build.calcsTab.calcsEnv.player.breakdown.MineSequenceAverageProjectiles.rowList)
+			local xml = build:SaveDB("Pyroclast sequence")
+			loadBuildFromXML(xml, "Pyroclast sequence")
+			assert.are.equals(4, build.configTab.input.pyroclastMineSequenceCount)
+			assert.near(expectedDPS, build.calcsTab.mainOutput.TotalDPS, 0.000001)
+		end)
+	end)
+
 	for _, support in ipairs({
 		{ name = "Trap", cooldown = "TrapCooldown", speed = "TrapThrowingSpeed", rate = 119 / 60 },
 		{ name = "Blastchain Mine", cooldown = "Cooldown", speed = "MineLayingSpeed", rate = 10 / 3 },

@@ -18164,14 +18164,12 @@ c["Mines Hinder Enemies within 3 metres for 2 seconds when they Land"]={nil,"Min
 c["Mines can be Detonated an additional time"]={nil,"Mines can be Detonated an additional time "}
 c["Mines can be Detonated an additional time 50% increased Effect of Auras from Mines"]={nil,"Mines can be Detonated an additional time 50% increased Effect of Auras from Mines "}
 c["Mines cannot be Damaged"]={nil,"Mines cannot be Damaged "}
-c["Mines have 15% increased Detonation Speed"]={nil,"Mines have 15% increased Detonation Speed "}
-c["Mines have 20% increased Detonation Speed"]={nil,"Mines have 20% increased Detonation Speed "}
-c["Mines have 20% increased Detonation Speed Mines have a 10% chance to be Detonated an Additional Time"]={nil,"Mines have 20% increased Detonation Speed Mines have a 10% chance to be Detonated an Additional Time "}
-c["Mines have 22% increased Detonation Speed"]={nil,"Mines have 22% increased Detonation Speed "}
-c["Mines have 30% increased Detonation Speed"]={nil,"Mines have 30% increased Detonation Speed "}
-c["Mines have 45% increased Detonation Speed"]={nil,"Mines have 45% increased Detonation Speed "}
-c["Mines have 50% increased Detonation Speed"]={nil,"Mines have 50% increased Detonation Speed "}
-c["Mines have 50% increased Detonation Speed Skills which throw Mines throw up to 1 additional Mine if you have at least 800 Dexterity"]={nil,"Mines have 50% increased Detonation Speed Skills which throw Mines throw up to 1 additional Mine if you have at least 800 Dexterity "}
+c["Mines have 15% increased Detonation Speed"]={{[1]={flags=0,keywordFlags=8192,name="MineDetonationSpeed",type="INC",value=15}},nil}
+c["Mines have 20% increased Detonation Speed"]={{[1]={flags=0,keywordFlags=8192,name="MineDetonationSpeed",type="INC",value=20}},nil}
+c["Mines have 22% increased Detonation Speed"]={{[1]={flags=0,keywordFlags=8192,name="MineDetonationSpeed",type="INC",value=22}},nil}
+c["Mines have 30% increased Detonation Speed"]={{[1]={flags=0,keywordFlags=8192,name="MineDetonationSpeed",type="INC",value=30}},nil}
+c["Mines have 45% increased Detonation Speed"]={{[1]={flags=0,keywordFlags=8192,name="MineDetonationSpeed",type="INC",value=45}},nil}
+c["Mines have 50% increased Detonation Speed"]={{[1]={flags=0,keywordFlags=8192,name="MineDetonationSpeed",type="INC",value=50}},nil}
 c["Mines have a 10% chance to be Detonated an Additional Time"]={nil,"Mines have a 10% chance to be Detonated an Additional Time "}
 c["Mines have a 15% chance to be Detonated an Additional Time"]={nil,"Mines have a 15% chance to be Detonated an Additional Time "}
 c["Minion Instability"]={{[1]={flags=0,keywordFlags=0,name="Keystone",type="LIST",value="Minion Instability"},[2]={flags=0,keywordFlags=0,name="Condition:HaveMinionInstability",type="FLAG",value=true}},nil}

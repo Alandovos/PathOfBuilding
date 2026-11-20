@@ -615,6 +615,8 @@ local modNameList = {
 	["additional traps"] = "TrapThrowCount",
 	["mine laying speed"] = "MineLayingSpeed",
 	["mine throwing speed"] = "MineLayingSpeed",
+	["mine detonation speed"] = "MineDetonationSpeed",
+	["detonation speed"] = "MineDetonationSpeed",
 	["mine detonation area of effect"] = "MineDetonationAreaOfEffect",
 	["mine duration"] = "MineDuration",
 	["additional mine"] = "MineThrowCount",
@@ -1186,6 +1188,7 @@ local preFlagList = {
 	-- Totem/trap/mine
 	["^attacks used by totems have "] = { flags = ModFlag.Attack, keywordFlags = KeywordFlag.Totem },
 	["^totems have "] = { keywordFlags = KeywordFlag.Totem },
+	["^mines have "] = { keywordFlags = KeywordFlag.Mine },
 	["^skills used by totems [hd][ae][va][el] "] = { keywordFlags = KeywordFlag.Totem },
 	["^spells cast by totems [hd][ae][va][el] "] = { flags = ModFlag.Spell, keywordFlags = KeywordFlag.Totem },
 	["^trap and mine damage "] = { keywordFlags = bor(KeywordFlag.Trap, KeywordFlag.Mine) },

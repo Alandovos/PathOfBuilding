@@ -1395,6 +1395,11 @@ skills["GemDetonateMines"] = {
 	skillTypes = { [SkillType.Spell] = true, [SkillType.Trappable] = true, [SkillType.Totemable] = true, [SkillType.Triggerable] = true, [SkillType.Instant] = true, [SkillType.Cooldown] = true, },
 	statDescriptionScope = "skill_stat_descriptions",
 	castTime = 0,
+	statMap = {
+		["mine_detonation_speed_+%"] = {
+			mod("MineDetonationSpeed", "INC", nil, 0, 0, { type = "GlobalEffect", effectType = "Buff", unscalable = true }),
+		},
+	},
 	baseFlags = {
 		spell = true,
 	},

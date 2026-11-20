@@ -1813,6 +1813,14 @@ return {
 	mod("TrapThrowCount", "BASE", nil, 0, 0, { type = "Condition", var = "DualWielding" })
 },
 -- Mine
+["base_mine_detonation_time_ms"] = {
+	skill("mineDetonationTime", nil),
+	div = 1000,
+},
+["display_additional_projectile_per_3_mines_in_detonation_sequence"] = {
+	skill("minesPerAdditionalProjectile", nil),
+	value = 3,
+},
 ["number_of_additional_remote_mines_allowed"] = {
 	mod("ActiveMineLimit", "BASE", nil),
 },

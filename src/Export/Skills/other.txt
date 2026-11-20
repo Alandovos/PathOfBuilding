@@ -460,6 +460,11 @@ return function(skills, mod, flag, skill)
 
 #skill GemDetonateMines
 #flags spell
+	statMap = {
+		["mine_detonation_speed_+%"] = {
+			mod("MineDetonationSpeed", "INC", nil, 0, 0, { type = "GlobalEffect", effectType = "Buff", unscalable = true }),
+		},
+	},
 #mods
 
 #skill SupportDivineBlessing

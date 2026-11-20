@@ -14888,6 +14888,10 @@ skills["PyroclastMine"] = {
 	skillTypes = { [SkillType.Spell] = true, [SkillType.Damage] = true, [SkillType.Projectile] = true, [SkillType.Fire] = true, [SkillType.RemoteMined] = true, [SkillType.Area] = true, [SkillType.HasReservation] = true, [SkillType.Aura] = true, [SkillType.AuraAffectsEnemies] = true, [SkillType.ProjectilesNotFromUser] = true, [SkillType.Nova] = true, [SkillType.AuraNotOnCaster] = true, },
 	statDescriptionScope = "skill_stat_descriptions",
 	castTime = 0.18,
+	parts = {
+		{ name = "Average Sequence (Automatic Overlap)", },
+		{ name = "Single Hit", },
+	},
 	statMap = {
 		["pyroclast_mine_aura_fire_exposure_%_to_apply"] = {
 			mod("FireExposure", "BASE", nil, 0, 0, { type = "GlobalEffect", effectType = "AuraDebuff", effectName = "Pyroclast Mine Fire Exposure" }),
@@ -14900,6 +14904,7 @@ skills["PyroclastMine"] = {
 		mine = true,
 	},
 	baseMods = {
+		skill("mineSequence", true, { type = "SkillPart", skillPart = 1 }),
 		skill("radius", 20),
 		skill("radiusLabel", "Area of initial explosion:"),
 		skill("radiusSecondary", 26),
@@ -14986,6 +14991,10 @@ skills["PyroclastMineAltX"] = {
 	skillTypes = { [SkillType.Spell] = true, [SkillType.Damage] = true, [SkillType.Projectile] = true, [SkillType.Fire] = true, [SkillType.RemoteMined] = true, [SkillType.Area] = true, [SkillType.HasReservation] = true, [SkillType.Aura] = true, [SkillType.AuraAffectsEnemies] = true, [SkillType.ProjectilesNotFromUser] = true, [SkillType.Nova] = true, [SkillType.AuraNotOnCaster] = true, },
 	statDescriptionScope = "skill_stat_descriptions",
 	castTime = 0.18,
+	parts = {
+		{ name = "Average Sequence (Automatic Overlap)", },
+		{ name = "Single Hit", },
+	},
 	statMap = {
 		["pyroclast_mine_aura_fire_exposure_%_to_apply"] = {
 			mod("FireExposure", "BASE", nil, 0, 0, { type = "GlobalEffect", effectType = "AuraDebuff", effectName = "Pyroclast Mine Fire Exposure" }),
@@ -14998,6 +15007,7 @@ skills["PyroclastMineAltX"] = {
 		mine = true,
 	},
 	baseMods = {
+		skill("mineSequence", true, { type = "SkillPart", skillPart = 1 }),
 		skill("radius", 20),
 		skill("radiusLabel", "Area of initial explosion:"),
 		skill("radiusSecondary", 26),

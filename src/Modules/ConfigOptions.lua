@@ -583,6 +583,10 @@ return {
 	{ var = "deathmarkDeathmarkActive", type = "check", label = "Is the enemy marked with Signal Prey?", ifSkill = "Predator", apply = function(val, modList, enemyModList)
 		modList:NewMod("Condition:EnemyHasDeathmark", "FLAG", true, "Config")
 	end },
+	{ label = "Pyroclast Mine:", ifSkill = "Pyroclast Mine", includeTransfigured = true },
+	{ var = "pyroclastMineSequenceCount", type = "integer", label = "Mines in sequence (if not maximum):", ifSkill = "Pyroclast Mine", includeTransfigured = true, tooltip = "Used by Average Sequence (Automatic Overlap).\nDefaults to the active mine limit; capped at that limit to model a preloaded sequence.\nDPS estimates repeated sequences with overlapping throwing and detonation, limited by the slower rate.\nAssumes all mines are centred on a stationary enemy and projectiles land uniformly across their spread area.\nDoes not simulate continued throws extending a sequence, mine expiry, re-arming, or projectile flight time.", apply = function(val, modList, enemyModList)
+		modList:NewMod("SkillData", "LIST", { key = "mineSequenceCount", value = m_max(1, math.floor(val)) }, "Config", { type = "SkillName", skillName = "Pyroclast Mine", includeTransfigured = true })
+	end },
 	{ label = "Pride:", ifSkill = "Pride" },
 	{ var = "prideEffect", type = "list", label = "Pride Aura Effect:", ifSkill = { "Pride", "AzmeriDemonPhysicalDamageAura" }, list = {{val="MIN",label="Initial effect"},{val="MAX",label="Maximum effect"}}, apply = function(val, modList, enemyModList)
 		if val == "MAX" then
@@ -786,8 +790,8 @@ return {
 	{ var = "VaalMoltenShellDamageMitigated", type = "count", label = "Damage mitigated:", tooltip = "Vaal Molten Shell reflects damage to the enemy,\nbased on the amount of damage it has mitigated in the last second.", ifSkill = "Vaal Molten Shell", apply = function(val, modList, enemyModList)
 		modList:NewMod("SkillData", "LIST", { key = "VaalMoltenShellDamageMitigated", value = val }, "Config", { type = "SkillName", skillName = "Molten Shell" })
 	end },
-	{ label = "Multi-part area skills:", ifSkill = { "Seismic Trap", "Lightning Spire Trap", "Explosive Trap", "Molten Strike", "Ball Lightning" }, includeTransfigured = true },
-	{ var = "enemySizePreset", type = "list", label = "Enemy size preset:", ifSkill = { "Seismic Trap", "Lightning Spire Trap", "Explosive Trap", "Molten Strike", "Ball Lightning" }, includeTransfigured = true, defaultIndex = 2, tooltip = [[
+	{ label = "Multi-part area skills:", ifSkill = { "Seismic Trap", "Lightning Spire Trap", "Explosive Trap", "Molten Strike", "Ball Lightning", "Pyroclast Mine" }, includeTransfigured = true },
+	{ var = "enemySizePreset", type = "list", label = "Enemy size preset:", ifSkill = { "Seismic Trap", "Lightning Spire Trap", "Explosive Trap", "Molten Strike", "Ball Lightning", "Pyroclast Mine" }, includeTransfigured = true, defaultIndex = 2, tooltip = [[
 Configure the radius of an enemy hitbox which is used in calculating some area multi-hitting (shotgunning) effects.
 
 Small sets the radius to 2.
@@ -812,7 +816,7 @@ Huge sets the radius to 11.
 			modList:NewMod("EnemyRadius", "BASE", 11, "Config")
 		end
 	end },
-	{ var = "enemyRadius", type = "integer", label = "Enemy radius:", ifSkill = { "Seismic Trap", "Lightning Spire Trap", "Explosive Trap", "Molten Strike", "Ball Lightning" }, includeTransfigured = true, tooltip = "Configure the radius of an enemy hitbox to calculate some area overlapping (shotgunning) effects.", apply = function(val, modList, enemyModList)
+	{ var = "enemyRadius", type = "integer", label = "Enemy radius:", ifSkill = { "Seismic Trap", "Lightning Spire Trap", "Explosive Trap", "Molten Strike", "Ball Lightning", "Pyroclast Mine" }, includeTransfigured = true, tooltip = "Configure the radius of an enemy hitbox to calculate some area overlapping (shotgunning) effects.", apply = function(val, modList, enemyModList)
 		modList:NewMod("EnemyRadius", "OVERRIDE", m_max(val, 1), "Config")
 	end },
 	{ var = "TotalMinionLife", type = "integer", label = "Minion Life override:", ifMod = "takenFromMinionBeforeYou", tooltip = "Overrides the automatically calculated Life of the minion supported by Companionship.", apply = function(val, modList, enemyModList)
