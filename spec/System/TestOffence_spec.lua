@@ -14,6 +14,11 @@ describe("TestOffence", function()
 	end
 
 	describe("Pyroclast Mine automatic modeling", function()
+		before_each(function()
+			-- Keep geometry/sequence checks resource-independent; mana-limit checks opt in separately.
+			build.configTab.input.pyroclastMineManaLimited = false
+		end)
+
 		local function update(config)
 			for key, value in pairs(config or { }) do
 				build.configTab.input[key] = value
@@ -179,6 +184,157 @@ describe("TestOffence", function()
 				assert.near(automatedDPS, update({ pyroclastMineSequenceCount = 1 }).TotalDPS, 0.000001)
 			end)
 		end
+
+		for _, name in ipairs({ "Pyroclast Mine", "Pyroclast Mine of Sabotage" }) do
+			for _, rearming in ipairs({ false, true }) do
+				it("derives continuously thrown " .. name .. " population independently of manual mine counts" .. (rearming and " with re-arming" or ""), function()
+					build.skillsTab:PasteSocketGroup(name .. " 20/0  1")
+					build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+					local gem = build.skillsTab.socketGroupList[1].gemList[1]
+					gem.skillMineCount = 1
+					gem.skillMineCountCalcs = 1
+					build.buildFlag = true
+					local output = update({
+						pyroclastMineSequenceCount = 1,
+						customMods = rearming and "Mines can be Detonated an additional time" or "",
+					})
+					local average, peak = output.MineAverageActive, output.MinePeakActive
+					local rate, projectiles, dps, reservation = output.MineEffectiveRate, output.MineSequenceAverageProjectiles, output.TotalDPS, output.ManaReserved
+					assert.is_true(average > 0 and average < output.ActiveMineLimit)
+					assert.is_true(average <= peak and peak <= output.ActiveMineLimit)
+					gem.skillMineCount = output.ActiveMineLimit
+					gem.skillMineCountCalcs = output.ActiveMineLimit
+					build.buildFlag = true
+					output = update({ pyroclastMineSequenceCount = output.ActiveMineLimit })
+					assert.are.equals(average, output.MineAverageActive)
+					assert.are.equals(peak, output.MinePeakActive)
+					assert.are.equals(rate, output.MineEffectiveRate)
+					assert.are.equals(projectiles, output.MineSequenceAverageProjectiles)
+					assert.near(dps, output.TotalDPS, 0.000001)
+					assert.is_true(output.ManaReserved > reservation)
+					build.viewMode = "CALCS"
+					runCallback("OnFrame")
+					assert.is_not_nil(build.calcsTab.calcsEnv.player.breakdown.MineAverageActive)
+					assert.is_not_nil(build.calcsTab.calcsEnv.player.breakdown.MinePeakActive)
+				end)
+			end
+		end
+
+		for _, name in ipairs({ "Pyroclast Mine", "Pyroclast Mine of Sabotage" }) do
+			it("spends mana and resumes held " .. name .. " throws as recovery becomes available", function()
+				newBuild()
+				assert.is_true(build.configTab.input.pyroclastMineManaLimited)
+				build.skillsTab:PasteSocketGroup(name .. " 20/0  1")
+				build.skillsTab.socketGroupList[1].includeInFullDPS = true
+				build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+				local output = update({ customMods = "Cannot Leech or Regenerate Mana" })
+				assert.are.equals(0, output.ManaRegenRecovery)
+				assert.is_not_nil(output.MineActualThrowRate)
+				assert.is_true(output.MineActualThrowRate > 0 and output.MineActualThrowRate < output.MineLayingSpeed)
+				assert.is_true(output.MineManaWait > 0)
+				assert.is_true(output.MineManaSpentRate * 29.997 <= output.Mana + 0.000001)
+				assert.near(output.CombinedDPS, output.FullDPS, 0.000001)
+				assert.near(output.MineActualThrowRate, build.calcsTab.calcsOutput.MineActualThrowRate, 0.000001)
+				local depletedDPS = output.TotalDPS
+				output = update({ customMods = "Cannot Leech or Regenerate Mana\n+1000 to maximum Mana" })
+				assert.are.equals(0, output.ManaRegenRecovery)
+				assert.is_true(output.TotalDPS > depletedDPS)
+				output = update({ customMods = "Regenerate 1000 Mana per second" })
+				local recoveredDPS, recoveredRate = output.TotalDPS, output.MineActualThrowRate
+				assert.are.equals(0, output.MineManaWait)
+				assert.is_true(recoveredDPS > depletedDPS)
+				assert.near(output.ManaCost * recoveredRate, output.ManaPerSecondCost, 0.000001)
+				output = update({ pyroclastMineManaLimited = false })
+				assert.near(recoveredDPS, output.TotalDPS, 0.000001)
+			end)
+		end
+
+		it("does not double-count the Active Mines reservation in mana-limited throwing", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			local gem = build.skillsTab.socketGroupList[1].gemList[1]
+			local expectedDPS, expectedRate
+			for _, count in ipairs({ 0, 1, 15 }) do
+				gem.skillMineCount = count
+				gem.skillMineCountCalcs = count
+				build.buildFlag = true
+				local output = update({ pyroclastMineManaLimited = true })
+				if expectedDPS then
+					assert.near(expectedDPS, output.TotalDPS, 0.000001)
+					assert.near(expectedRate, output.MineActualThrowRate, 0.000001)
+				end
+				expectedDPS, expectedRate = output.TotalDPS, output.MineActualThrowRate
+			end
+		end)
+
+		it("treats temporary mine reservation separately from spending, releasing it on the first detonation", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			local mods = "Cannot Leech or Regenerate Mana\n100% reduced Mana Cost of Skills\n1000% increased Mine Throwing Speed\nMines have 100% reduced Detonation Speed"
+			local output = update({ pyroclastMineManaLimited = true, customMods = mods })
+			assert.are.equals(0, output.ManaCost)
+			assert.are.equals(0, output.ManaRegenRecovery)
+			assert.are.equals(0, output.MineManaSpentRate)
+			assert.is_true(output.MineActualThrowRate > 0)
+			assert.is_true(output.MineManaWait > 0)
+			assert.is_true(output.MinePeakActive < output.ActiveMineLimit)
+			output = update({ customMods = mods .. "\nMines can be Detonated an additional time\n99% reduced Cast Speed" })
+			assert.are.equals(0, output.MineManaSpentRate)
+			assert.are.equals(0, output.MineReusedRate)
+			assert.are.equals(output.ActiveMineLimit, output.MinePeakActive)
+		end)
+
+		it("does not throw when there is no mana or the upfront cost exceeds the entire pool", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			for _, mods in ipairs({ "100% reduced maximum Mana", "+1000 to Total Mana Cost of Skills" }) do
+				local output = update({ pyroclastMineManaLimited = true, customMods = mods })
+				assert.are.equals(0, output.MineActualThrowRate)
+				assert.are.equals(0, output.MineManaSpentRate)
+				assert.are.equals(0, output.TotalDPS)
+			end
+		end)
+
+		it("explicitly flags unsupported life or Energy Shield payment instead of applying mana limits", function()
+			for _, support in ipairs({ "", "\nLifetap 20/0  1" }) do
+				newBuild()
+				build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1" .. support)
+				build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+				local output = update({ pyroclastMineManaLimited = true, customMods = support == "" and "Eldritch Battery" or "" })
+				assert.is_nil(output.MineActualThrowRate)
+				assert.is_true(output.TotalDPS > 0)
+				assert.is_not_nil(build.calcsTab.mainEnv.player.mainSkill.infoMessage:find("unavailable with Life/ES payment", 1, true))
+			end
+		end)
+
+		it("lets continuous throwing fill the mine pool when detonation cannot keep up", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			local average = update().MineAverageActive
+			local output = update({ customMods = "1000% increased Mine Throwing Speed\nMines have 100% reduced Detonation Speed" })
+			assert.are.equals(output.ActiveMineLimit, output.MinePeakActive)
+			assert.is_true(output.MineAverageActive > average)
+			assert.is_true(output.MineAverageActive <= output.MinePeakActive)
+			assert.is_true(output.MineEffectiveRate < output.MineLayingSpeed * output.MineThrowCount)
+			output = update({ customMods = "100% reduced Mine Throwing Speed" })
+			assert.are.equals(0, output.MineAverageActive)
+			assert.are.equals(0, output.MinePeakActive)
+			assert.are.equals(0, output.TotalDPS)
+		end)
+
+		it("does not report continuous mine occupancy for preloaded manual or single-hit estimates", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			local output = update()
+			assert.is_nil(output.MineAverageActive)
+			assert.is_nil(output.MinePeakActive)
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			assert.is_not_nil(update().MineAverageActive)
+			build.skillsTab.socketGroupList[1].gemList[1].skillPart = 2
+			build.buildFlag = true
+			output = update()
+			assert.is_nil(output.MineAverageActive)
+			assert.is_nil(output.MinePeakActive)
+		end)
 
 		it("does not mistake unlinked Automation on another spell for automated mine detonation", function()
 			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")

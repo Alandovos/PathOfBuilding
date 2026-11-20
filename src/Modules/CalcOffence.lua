@@ -351,21 +351,37 @@ local function simulateMineSequences(output, mineLimit, cooldown, detonationTime
 	local phases = manual and 1 or 4
 	local positions = { }
 	local detonations, sequences, sequenceTime, reused, thrown, lastTick = 0, 0, 0, 0, 0, 0
+	local activeMineTicks, peakMines, expired, replaced, spent, remaining = 0, 0, 0, 0, 0, 0
+	local completedThrows, manaWaitTicks, manaSpent = 0, 0, 0
 	-- Average four trigger phases; supply is batched, with fractional extra mines carried between throws.
 	for phase = 0, phases - 1 do
 		local nextTrigger = phase == 0 and 0 or m_floor(triggerTicks * phase / 4)
-		local produced = 0
+		local produced, previousThrows = 0, 0
 		local mines = { }
 		local chains = { }
+		local mana = options.mana and options.mana.pool
+		local reservedMines, throwsCompleted, throwsStarted = 0, 0, 0
+		local throwFinish
+		local function removeMine(index)
+			local mine = table.remove(mines, index)
+			if mine.reserving then
+				reservedMines = reservedMines - 1
+			end
+		end
 		local function detonate(tick, previousMine)
 			for index, mine in ipairs(mines) do
 				if tick >= mine.ready and mine ~= previousMine then
+					if mine.reserving then
+						mine.reserving = false
+						reservedMines = reservedMines - 1
+					end
 					if mine.uses < 1 + options.extraUses then
 						reused = reused + 1
 					end
 					mine.uses = mine.uses - 1
 					if mine.uses == 0 then
-						table.remove(mines, index)
+						removeMine(index)
+						spent = spent + 1
 					else
 						mine.ready = tick + rearmTicks
 					end
@@ -377,20 +393,43 @@ local function simulateMineSequences(output, mineLimit, cooldown, detonationTime
 		for tick = 0, ticks - 1 do
 			for index = #mines, 1, -1 do
 				if tick >= mines[index].expires then
-					table.remove(mines, index)
+					removeMine(index)
+					expired = expired + 1
 				end
 			end
-			local throws = manual and 0 or m_floor(tick / tickRate * output.MineLayingSpeed + 0.0000001)
+			local time = tick / tickRate
+			local nextStart = time
+			if mana and tick > 0 then
+				mana = m_max(0, m_min(options.mana.pool - reservedMines * options.mana.reservation, mana + options.mana.recovery / tickRate))
+			end
+			if mana and throwFinish and time + 0.0000001 >= throwFinish then
+				throwsCompleted = throwsCompleted + 1
+				nextStart = throwFinish
+				throwFinish = nil
+			end
+			local throws = mana and throwsCompleted or (manual and 0 or m_floor(time * output.MineLayingSpeed + 0.0000001))
+			completedThrows = completedThrows + throws - previousThrows
+			previousThrows = throws
 			local supplied = manual and options.preloadCount or m_floor(throws * output.MineThrowCount + 0.0000001)
 			local added = supplied - produced
 			thrown = thrown + added
+			if lifetimeTicks > 0 then
+				replaced = replaced + m_max(0, added - mineLimit)
+			else
+				expired = expired + added
+			end
 			for index = 1, lifetimeTicks > 0 and m_min(mineLimit, added) or 0 do
 				if #mines >= mineLimit then
-					table.remove(mines, 1)
+					removeMine(1)
+					replaced = replaced + 1
 				end
-				t_insert(mines, { ready = tick, expires = tick + lifetimeTicks, uses = 1 + options.extraUses })
+				t_insert(mines, { ready = tick, expires = tick + lifetimeTicks, uses = 1 + options.extraUses, reserving = options.mana ~= nil })
+				if mana then
+					reservedMines = reservedMines + 1
+				end
 			end
 			produced = supplied
+			peakMines = m_max(peakMines, #mines)
 			-- Existing sequences get priority on ties; a trigger starts another sequence, not a reset.
 			for index = #chains, 1, -1 do
 				local chain = chains[index]
@@ -424,13 +463,48 @@ local function simulateMineSequences(output, mineLimit, cooldown, detonationTime
 					})
 				end
 			end
+			if mana then
+				mana = m_max(0, m_min(mana, options.mana.pool - reservedMines * options.mana.reservation))
+				if not throwFinish and output.MineLayingSpeed > 0 then
+					local nextCount = m_floor((throwsCompleted + 1) * output.MineThrowCount + 0.0000001) - produced
+					local displaced = m_min(#mines, m_max(0, #mines + nextCount - mineLimit))
+					local futureReserved = reservedMines + m_min(mineLimit, nextCount)
+					for index = 1, displaced do
+						if mines[index].reserving then
+							futureReserved = futureReserved - 1
+						end
+					end
+					-- Reservation needs capacity, not current mana; only the upfront cost must be payable.
+					if mana + 0.0000001 >= options.mana.cost and futureReserved * options.mana.reservation <= options.mana.pool then
+						mana = mana - options.mana.cost
+						throwsStarted = throwsStarted + 1
+						local refund = options.mana.refundEvery2 and throwsStarted % 2 == 0 and options.mana.cost or 0
+						mana = mana + refund
+						manaSpent = manaSpent + options.mana.cost - refund
+						throwFinish = nextStart + 1 / output.MineLayingSpeed
+					else
+						manaWaitTicks = manaWaitTicks + 1
+					end
+				end
+			end
+			activeMineTicks = activeMineTicks + #mines
 		end
+		remaining = remaining + #mines
 	end
 	return {
 		positions = positions,
 		detonations = detonations,
 		reused = reused,
 		thrown = thrown,
+		averageMines = ticks > 0 and activeMineTicks / (phases * ticks) or 0,
+		peakMines = peakMines,
+		expired = expired,
+		replaced = replaced,
+		spent = spent,
+		remaining = remaining,
+		throwRate = ticks > 0 and completedThrows / (phases * ticks / tickRate) or 0,
+		manaWait = ticks > 0 and 100 * manaWaitTicks / (phases * ticks) or 0,
+		manaSpentRate = ticks > 0 and manaSpent / (phases * ticks / tickRate) or 0,
 		count = sequences > 0 and detonations / sequences or 0,
 		time = sequences > 0 and sequenceTime / sequences or 0,
 		duration = ticks / tickRate,
@@ -473,11 +547,26 @@ local function calcMineSequence(activeSkill, output, breakdown)
 	local durationMod = m_max(0, 1 + skillModList:Sum("BASE", skillCfg, "MineDuration") / 100 + skillModList:Sum("INC", skillCfg, "MineDuration") / 100) * skillModList:More(skillCfg, "MineDuration")
 	local mineDuration = skillData.mineDuration * durationMod
 	local automated = automationCooldown ~= nil
+	local manaOptions, resourceWarning
+	if automated and skillData.mineSimulateMana then
+		if activeSkill.actor.modDB:Flag(nil, "EnergyShieldProtectsMana") or (output.LifeCost or 0) > 0 or (output.ESCost or 0) > 0 or (skillData.LifeReservedPerMine or 0) > 0 then
+			resourceWarning = "Mana-limited throwing unavailable with Life/ES payment; assumes resources"
+		else
+			manaOptions = {
+				pool = m_max(0, m_min(output.Mana, (output.ManaUnreserved or 0) + (skillData.ManaReservedSnapshot or 0))),
+				cost = output.ManaCost + (output.ManaPercentCost or 0) * output.Mana / 100,
+				recovery = output.ManaRegenRecovery - (output.ManaPerSecondCost or 0),
+				reservation = skillData.ManaReservedPerMine or 0,
+				refundEvery2 = skillModList:Flag(skillCfg, "Every2UseManaCostRefund"),
+			}
+		end
+	end
 	local simulated = (automated or extraUses > 0) and simulateMineSequences(output, mineLimit, automationCooldown or detonateSkill.levels[1].cooldown, detonationTime, acceleration, {
 		extraUses = extraUses,
 		rearmTime = rearmTime,
 		duration = mineDuration,
 		preloadCount = not automated and preloadCount or nil,
+		mana = manaOptions,
 	})
 	local projectileBase = skillModList:Sum("BASE", skillCfg, "ProjectileCount")
 	local projectileMore = skillModList:More(skillCfg, "ProjectileCount")
@@ -531,6 +620,16 @@ local function calcMineSequence(activeSkill, output, breakdown)
 	output.MineEffectiveRate = mineRate
 	if automated then
 		output.MineAutomationTriggerRate = automationCooldown > 0 and 1 / automationCooldown or data.misc.ServerTickRate
+		output.MineAverageActive = simulated.averageMines
+		output.MinePeakActive = simulated.peakMines
+	end
+	if manaOptions then
+		output.MineActualThrowRate = simulated.throwRate
+		output.MineManaWait = simulated.manaWait
+		output.MineManaSpentRate = simulated.manaSpentRate
+		activeSkill.infoMessage = activeSkill.infoMessage .. "; mana-limited throwing"
+	elseif resourceWarning then
+		activeSkill.infoMessage = activeSkill.infoMessage .. "; " .. resourceWarning
 	end
 	if extraUses > 0 then
 		output.MineRearmTime = rearmTime
@@ -637,6 +736,41 @@ local function calcMineSequence(activeSkill, output, breakdown)
 			end
 		end
 		if automated then
+			breakdown.MineAverageActive = {
+				s_format("%.3f physical mines present on average over four %.3fs samples.", simulated.averageMines, simulated.duration),
+				"Time-weighted population after each tick's events, starting empty and continuously throwing.",
+				"Includes mines waiting to re-arm; a detonation is not necessarily a destroyed mine.",
+				s_format("%d thrown = %d exhausted + %d expired + %d replaced + %d remaining across all samples.", simulated.thrown, simulated.spent, simulated.expired, simulated.replaced, simulated.remaining),
+				"Neither the manual preload count nor the Active Mines snapshot supplies this population.",
+				"Active Mines still controls ordinary stat snapshots; this estimate restores this skill's static reservation and models its temporary reservation dynamically.",
+				manaOptions and "Throwing pauses for mana cost or temporary reservation capacity, then resumes after recovery." or (resourceWarning or "Resource limits are disabled; assumes enough resources to keep throwing."),
+				"Mine arming/landing delays are not simulated.",
+			}
+			breakdown.MinePeakActive = {
+				s_format("%d physical mines at the busiest sampled instant, capped at %d.", simulated.peakMines, mineLimit),
+				"Measured after throws and expiry, before detonations on the same tick.",
+				"Not a preloaded batch, average mine count, or number of detonations in a sequence.",
+				"This reports the simulated pool, not an automatically applied mana-reservation value.",
+			}
+			if manaOptions then
+				breakdown.MineActualThrowRate = {
+					s_format("%.3f throws/s when uninterrupted; %.3f completed throws/s in the mana simulation.", output.MineLayingSpeed, simulated.throwRate),
+					s_format("%.0f starting mana after other reservations; %.3f mana cost per throw.", manaOptions.pool, manaOptions.cost),
+					s_format("%.3f mana/s from regeneration and flat recovery, after inherent ongoing cost.", manaOptions.recovery),
+					s_format("%.0f mana temporarily reserved per mine until first detonation or destruction.", manaOptions.reservation),
+					"Spending removes mana; releasing reservation only opens capacity, it does not refund the mana cost.",
+					"Preserves uninterrupted throw timing; waiting for mana does not accumulate a backlog of free throws.",
+					"Excludes flask-use timing, leech, recoup, on-kill recovery and spending by other skills.",
+				}
+				breakdown.MineManaWait = {
+					s_format("%.2f%% of sampled time waiting for mana cost or reservation capacity.", simulated.manaWait),
+					"Starts full, throws continuously while affordable, and resumes as soon as the next tick can pay.",
+				}
+				breakdown.MineManaSpentRate = {
+					s_format("%.3f mana/s spent on throw starts, including an in-flight throw at the sample boundary.", simulated.manaSpentRate),
+					"Temporary mine reservation is separate and is not counted as spending.",
+				}
+			end
 			breakdown.MineAutomationTriggerRate = {
 				"Enabled Detonate Mines supported by Automation detected.",
 				"Uses Detonate Mines' own cooldown, including local/global cooldown recovery and server-tick rounding.",
@@ -650,14 +784,15 @@ local function calcMineSequence(activeSkill, output, breakdown)
 				"Timers are rounded to server ticks; existing sequences act before triggers on ties.",
 				"A sequence ends if no mine is available at its next detonation attempt.",
 				"This is a timing estimate, not verified GGG runtime event ordering.",
-				"Mine expiry is modeled; resource limits, Skitterbot detonations and projectile flight are not simulated.",
+				manaOptions and "Mana cost, recovery and temporary reservation are simulated." or (resourceWarning or "Resource limits are disabled."),
+				"Skitterbot detonations and projectile flight are not simulated.",
 			}
 			breakdown.MineDetonationRate = {
 				s_format("%.3f mines detonated per second across competing sequences.", detonationRate),
 				"Estimated from continuous throwing, active mine limit, and automated trigger cadence.",
 			}
 			breakdown.MineEffectiveRate = {
-				s_format("%.3f mines supplied per second", throwingRate),
+				s_format("%.3f mines supplied per second in the timing samples", simulated.thrown / (4 * simulated.duration)),
 				s_format("%.3f mines detonated per second in the timing samples", mineRate),
 				"Excludes mines left undetonated or discarded at the active mine limit.",
 			}
@@ -1736,9 +1871,6 @@ function calcs.offence(env, actor, activeSkill)
 				breakdown.MineAuraRadius = breakdown.area(data.misc.MineAuraRadiusBase, output.AreaOfEffectMod, output.MineAuraRadius, incAreaBreakpoint, moreAreaBreakpoint, redAreaBreakpoint, lessAreaBreakpoint)
 			end
 		end
-		if skillData.mineSequence then
-			calcMineSequence(activeSkill, output, breakdown)
-		end
 	end
 	if skillFlags.totem then
 		local baseSpeed
@@ -2229,6 +2361,9 @@ function calcs.offence(env, actor, activeSkill)
 	end
 	-- Eldritch Battery adds maximum Energy Shield to the Mana available for payable-cost damage.
 	output.ManaCostPayablePool = (output.ManaUnreserved or 0) + (modDB:Flag(nil, "EnergyShieldProtectsMana") and output.EnergyShield or 0)
+	if skillFlags.mine and skillData.mineSequence then
+		calcMineSequence(activeSkill, output, breakdown)
+	end
 
 	-- account for Sacrificial Zeal
 	-- Note: Sacrificial Zeal grants Added Spell Physical Damage equal to 25% of the Skill's Mana Cost, and causes you to take Physical Damage over Time, for 4 seconds
@@ -6309,7 +6444,7 @@ function calcs.offence(env, actor, activeSkill)
 			local useSpeed = 1
 			local timeType
 			if skillFlags.trap or skillFlags.mine then
-				local preSpeed = output.TrapThrowingSpeed or output.MineLayingSpeed
+				local preSpeed = output.TrapThrowingSpeed or output.MineActualThrowRate or output.MineLayingSpeed
 				local cooldown = output.TrapCooldown or output.Cooldown
 				useSpeed = (cooldown and cooldown > 0 and 1 / cooldown or preSpeed)
 				timeType = skillFlags.trap and "trap throwing" or "mine laying"

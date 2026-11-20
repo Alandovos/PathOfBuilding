@@ -2073,9 +2073,15 @@ function calcs.perform(env, skipEHP)
 						values.reservedPercent = m_max(round(modifiedPercent / (1 + values.efficiency / 100) / values.efficiencyMore, 0) / 100, 0)
 					end
 				end
+				if activeSkill.skillFlags.mine then
+					activeSkill.skillData[name.."ReservedPerMine"] = values.reservedFlat + m_ceil(output[name] * values.reservedPercent / 100)
+				end
 				if activeSkill.activeMineCount then
 					values.reservedFlat = values.reservedFlat * activeSkill.activeMineCount
 					values.reservedPercent = values.reservedPercent * activeSkill.activeMineCount
+				end
+				if activeSkill.skillFlags.mine then
+					activeSkill.skillData[name.."ReservedSnapshot"] = values.reservedFlat + m_ceil(output[name] * values.reservedPercent / 100)
 				end
 				-- Blood Sacrament increases reservation per stage channelled
 				if activeSkill.skillCfg.skillName == "Blood Sacrament" and activeSkill.activeStageCount then
