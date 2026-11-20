@@ -116,7 +116,16 @@
         Disable the checkbox for the previous resource-unlimited estimate. Manual preloaded-batch and Single Hit calculations are unchanged.
         Calcs reports the time-weighted average physical mine population after tick events and its peak after throws but before same-tick detonations, including mines waiting to re-arm.
         The population audit accounts for thrown mines as exhausted, expired, replaced at the mine limit, or remaining at the sample boundary.
-        The legacy "Active Mines" value still supplies ordinary static reservation and mine-count-dependent bonuses outside the timing estimate; damage/defensive snapshots are not time-averaged.
+        For automated Average Sequence, the offensive mine mastery uses simulated nearby mines instead of the legacy Active Mines snapshot.
+        Increased damage taken is evaluated at each integer population, including each modifier's cap, before averaging; it remains additive with other increased damage taken.
+        Hits weight the population immediately before each detonation by its initial hit plus expected overlapping projectiles, preserving correlation with sequence position.
+        Damage over time uses time-weighted debuff uptime after tick events, including empty-pool time, rather than snapshotting damage taken when an ailment is inflicted.
+        This assumes continuous DoT uptime; individual ailment durations and their correlation with the mine population are not simulated.
+        The live pool, including the detonating mine and mines waiting to re-arm, is assumed to apply the debuff within its stated range.
+        Aura activity during detonation/re-arming and projectile-impact timing are not verified from GGG runtime data. Projectile travel and the final-use animation lifetime are not simulated.
+        Calcs exposes separate hit-weighted and time-weighted mine damage-taken contributions. The adjustment is skill-local: shared enemy modifiers and other skills are not changed.
+        The legacy "Active Mines" value still supplies ordinary static reservation, the defensive mine mastery and other mine-count-dependent snapshots.
+        Manual sequences, Single Hit and other mine skills retain their existing Active Mines behavior.
         Detonation timers round up to server ticks, and existing sequences act before new triggers on ties; a sequence ends when its next attempt finds no available mine.
         These event-ordering assumptions are not verified against GGG's runtime. Sequences still active at 30 seconds are truncated, so this is a finite-window estimate, not an exact steady-state or preloaded burst calculation.
         The pool tracks individual mines, their original expiry, remaining uses and re-arm availability. New throws displace the oldest mines at the active mine limit, including re-arming mines.

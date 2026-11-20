@@ -565,6 +565,102 @@ describe("TestOffence", function()
 			assert.near(output.AverageDamage * output.MineLayingSpeed * output.MineThrowCount, output.TotalDPS, 0.000001)
 		end)
 
+		for _, name in ipairs({ "Pyroclast Mine", "Pyroclast Mine of Sabotage" }) do
+			it("uses simulated nearby mines for " .. name .. " mastery damage and Full DPS", function()
+				build.skillsTab:PasteSocketGroup(name .. " 20/0  1")
+				build.skillsTab.socketGroupList[1].includeInFullDPS = true
+				build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+				local mastery = "Each Mine applies 2% increased Damage taken to Enemies within 6 metres, up to 10%"
+				local base = update({ customMods = "Nearby Enemies take 40% increased Damage" }).TotalDPS
+				local output = update({ customMods = "Nearby Enemies take 40% increased Damage\n" .. mastery })
+				assert.is_true(output.MineDamageTakenAtHit > 0 and output.MineDamageTakenAtHit <= 10)
+				assert.near(base * (1 + output.MineDamageTakenAtHit / 140), output.TotalDPS, 0.000001)
+				assert.near(output.CombinedDPS, output.FullDPS, 0.000001)
+				local dps = output.TotalDPS
+				local gem = build.skillsTab.socketGroupList[1].gemList[1]
+				gem.skillMineCount, gem.skillMineCountCalcs = 15, 15
+				build.buildFlag = true
+				output = update()
+				assert.near(dps, output.TotalDPS, 0.000001)
+				assert.near(dps, build.calcsTab.calcsOutput.TotalDPS, 0.000001)
+				assert.are.equals(15, build.calcsTab.mainEnv.enemy.modDB:GetMultiplier("ActiveMineCount"))
+				build.viewMode = "CALCS"
+				runCallback("OnFrame")
+				assert.is_not_nil(build.calcsTab.calcsEnv.player.breakdown.MineDamageTakenAtHit)
+				assert.is_not_nil(build.calcsTab.calcsEnv.player.breakdown.MineDamageTakenOverTime)
+				gem.skillMineCount, gem.skillMineCountCalcs = nil, nil
+				build.buildFlag = true
+				output = update({ customMods = "Nearby Enemies take 40% increased Damage" })
+				assert.near(base, output.TotalDPS, 0.000001)
+				assert.near(0, output.MineDamageTakenAtHit, 0.000001)
+			end)
+		end
+
+		it("uses time-weighted mine debuff uptime for ignite, not hit-weighted or snapshot damage taken", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			local mods = "-14 to maximum number of Remote Mines\n100% chance to Ignite"
+			local output = update({ customMods = mods })
+			local hit, ignite = output.TotalDPS, output.IgniteDPS
+			assert.is_true(ignite > 0)
+			output = update({ customMods = mods .. "\nEach Mine applies 2% increased Damage taken to Enemies within 6 metres, up to 10%" })
+			assert.near(2, output.MineDamageTakenAtHit, 0.000001)
+			assert.near(2 * output.MineAverageActive, output.MineDamageTakenOverTime, 0.000001)
+			assert.is_true(output.MineDamageTakenOverTime < output.MineDamageTakenAtHit)
+			assert.near(hit * 1.02, output.TotalDPS, 0.000001)
+			assert.near(ignite * (1 + output.MineDamageTakenOverTime / 100), output.IgniteDPS, 0.000001)
+		end)
+
+		it("caps each sampled mine debuff before averaging and weights hits by sequence projectiles", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1\nMinefield 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			local mods = "100% increased Mine Throwing Speed\nMines can be Detonated an additional time"
+			local uncapped = update({ customMods = mods .. "\nEach Mine applies 2% increased Damage taken to Enemies within 6 metres, up to 100%" })
+			local hit, dot = uncapped.MineDamageTakenAtHit, uncapped.MineDamageTakenOverTime
+			assert.near(2 * uncapped.MineAverageActive, dot, 0.000001)
+			local output = update({ customMods = mods .. "\nEach Mine applies 2% increased Damage taken to Enemies within 6 metres, up to 10%" })
+			assert.is_true(output.MinePeakActive > 5)
+			assert.is_true(output.MineDamageTakenAtHit < math.min(hit, 10))
+			assert.is_true(output.MineDamageTakenOverTime < math.min(dot, 10))
+			local weighted = output.MineDamageTakenAtHit
+			output = update({ enemySizePreset = "Custom", enemyRadius = 100 })
+			assert.is_true(math.abs(output.MineDamageTakenAtHit - weighted) > 0.000001)
+		end)
+
+		it("accounts for mana-starved debuff downtime and handles no mine supply", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			local mods = "Each Mine applies 2% increased Damage taken to Enemies within 6 metres, up to 10%"
+			local uptime = update({ customMods = mods }).MineDamageTakenOverTime
+			local output = update({ pyroclastMineManaLimited = true, customMods = mods .. "\nNo Mana Regeneration" })
+			assert.is_true(output.MineManaWait > 0)
+			assert.is_true(output.MineDamageTakenOverTime < uptime)
+			output = update({ customMods = mods .. "\n100% reduced Mine Throwing Speed" })
+			assert.are.equals(0, output.TotalDPS)
+			assert.are.equals(0, output.MineDamageTakenAtHit)
+			assert.are.equals(0, output.MineDamageTakenOverTime)
+		end)
+
+		it("preserves static mine mastery behavior outside automated Average Sequence", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			local gem = build.skillsTab.socketGroupList[1].gemList[1]
+			gem.skillMineCount, gem.skillMineCountCalcs = 5, 5
+			build.buildFlag = true
+			local base = update().TotalDPS
+			local mods = "Each Mine applies 2% increased Damage taken to Enemies within 6 metres, up to 10%"
+			local output = update({ customMods = mods })
+			assert.near(base * 1.1, output.TotalDPS, 0.000001)
+			assert.is_nil(output.MineDamageTakenAtHit)
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			assert.is_not_nil(update().MineDamageTakenAtHit)
+			gem.skillPart = 2
+			build.buildFlag = true
+			output = update()
+			assert.is_nil(output.MineDamageTakenAtHit)
+			local singleHit = output.TotalDPS
+			assert.near(singleHit / 1.1, update({ customMods = "" }).TotalDPS, 0.000001)
+		end)
+
 		it("shows automated sequence breakdowns, survives saving and preserves single-hit mode", function()
 			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1\nMinefield 20/0  1")
 			build.skillsTab:PasteSocketGroup("Detonate Mines 1/20  1\nAutomation 20/20  1")

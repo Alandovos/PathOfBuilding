@@ -333,6 +333,39 @@ Added Small Passive Skills grant: 12% increased Fire Damage
 		assert(math.abs(calculate({ spec = loaded }).Life - output.Life) < 1e-8)
 	end)
 
+	it("credits simulated nearby-mine damage taken when comparing mine mastery effects", function()
+		local mastery = accessMastery("Mine Mastery")
+		lockAllocated()
+		build.spec.masterySelections[mastery.id] = 533
+		build.spec:AllocNode(mastery)
+		for id, node in pairs(build.spec.nodes) do
+			if not node.alloc and TreeOptimizer.CanChange(node, build.spec) then
+				build.spec.optimizerBlocks[id] = true
+			end
+		end
+		build.skillsTab:PasteSocketGroup("Pyroclast Mine 1/0  1")
+		build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 1/0  1")
+		build.configTab.input.pyroclastMineManaLimited = false
+		build.configTab.input.customMods = "+1000 to all Attributes"
+		build.configTab:BuildModList()
+		build.buildFlag = true
+		runCallback("OnFrame")
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		local calculate, damageTakenDPS = optimizer.calculate
+		optimizer.calculate = function(override)
+			local output = calculate(override)
+			if override.spec.masterySelections[mastery.id] == 29161 then
+				damageTakenDPS = output.CombinedDPS
+			end
+			return output
+		end
+		finish(optimizer)
+		assert(damageTakenDPS and damageTakenDPS > optimizer.base.dps, "Offensive mine mastery received no DPS credit")
+		assert(optimizer.bestMetrics.dps >= damageTakenDPS)
+		assert(optimizer.bestMetrics.ehp == optimizer.base.ehp)
+		assert(build.spec.masterySelections[mastery.id] == 533)
+	end)
+
 	it("does not duplicate a mastery effect already selected at another locked mastery", function()
 		local firstMastery = accessMastery("Life Mastery")
 		local firstEffect = firstMastery.masteryEffects[1].effect

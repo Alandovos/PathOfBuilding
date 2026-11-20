@@ -350,6 +350,12 @@ local function simulateMineSequences(output, mineLimit, cooldown, detonationTime
 	local lifetimeTicks = m_ceil(options.duration * tickRate)
 	local phases = manual and 1 or 4
 	local positions = { }
+	local populations, timePopulations = { }, { }
+	local function recordDetonation(position, population)
+		positions[position] = (positions[position] or 0) + 1
+		populations[position] = populations[position] or { }
+		populations[position][population] = (populations[position][population] or 0) + 1
+	end
 	local detonations, sequences, sequenceTime, reused, thrown, lastTick = 0, 0, 0, 0, 0, 0
 	local activeMineTicks, peakMines, expired, replaced, spent, remaining = 0, 0, 0, 0, 0, 0
 	local completedThrows, manaWaitTicks, manaSpent = 0, 0, 0
@@ -371,6 +377,7 @@ local function simulateMineSequences(output, mineLimit, cooldown, detonationTime
 		local function detonate(tick, previousMine)
 			for index, mine in ipairs(mines) do
 				if tick >= mine.ready and mine ~= previousMine then
+					local population = #mines
 					if mine.reserving then
 						mine.reserving = false
 						reservedMines = reservedMines - 1
@@ -386,7 +393,7 @@ local function simulateMineSequences(output, mineLimit, cooldown, detonationTime
 						mine.ready = tick + rearmTicks
 					end
 					lastTick = tick
-					return mine
+					return mine, population
 				end
 			end
 		end
@@ -434,11 +441,11 @@ local function simulateMineSequences(output, mineLimit, cooldown, detonationTime
 			for index = #chains, 1, -1 do
 				local chain = chains[index]
 				if tick >= chain.nextTick then
-					local mine = detonate(tick, chain.lastMine)
+					local mine, population = detonate(tick, chain.lastMine)
 					if mine then
 						detonations = detonations + 1
 						chain.count = chain.count + 1
-						positions[chain.count] = (positions[chain.count] or 0) + 1
+						recordDetonation(chain.count, population)
 						sequenceTime = sequenceTime + (tick - chain.lastTick) / tickRate
 						chain.lastTick = tick
 						chain.lastMine = mine
@@ -450,11 +457,11 @@ local function simulateMineSequences(output, mineLimit, cooldown, detonationTime
 			end
 			if tick >= nextTrigger and (not manual or #chains == 0) then
 				nextTrigger = tick + triggerTicks
-				local mine = detonate(tick)
+				local mine, population = detonate(tick)
 				if mine then
 					detonations = detonations + 1
 					sequences = sequences + 1
-					positions[1] = (positions[1] or 0) + 1
+					recordDetonation(1, population)
 					t_insert(chains, {
 						count = 1,
 						lastTick = tick,
@@ -488,11 +495,14 @@ local function simulateMineSequences(output, mineLimit, cooldown, detonationTime
 				end
 			end
 			activeMineTicks = activeMineTicks + #mines
+			timePopulations[#mines] = (timePopulations[#mines] or 0) + 1
 		end
 		remaining = remaining + #mines
 	end
 	return {
 		positions = positions,
+		populations = populations,
+		timePopulations = timePopulations,
 		detonations = detonations,
 		reused = reused,
 		thrown = thrown,
@@ -574,6 +584,8 @@ local function calcMineSequence(activeSkill, output, breakdown)
 	local projectileMax = skillModList:Override(skillCfg, "ProjectileCountMaximum") or m_huge
 	local singleProjectile = skillModList:Flag(skillCfg, "NoAdditionalProjectiles") or skillModList:Flag(skillCfg, "SingleProjectile")
 	local projectileTotal, sequenceTime = 0, 0
+	local initialHit = output.AreaOfEffectRadius > 0 and 1 or 0
+	local hitWeights = automated and { } or nil
 	local rows = { }
 	local positionCount = mineCount
 	if simulated then
@@ -586,6 +598,11 @@ local function calcMineSequence(activeSkill, output, breakdown)
 		local delay = mine == 1 and 0 or detonationTime / (1 + acceleration * (mine - 2))
 		local weight = simulated and simulated.positions[mine] or 1
 		projectileTotal = projectileTotal + projectiles * weight
+		if hitWeights then
+			for population, count in pairs(simulated.populations[mine]) do
+				hitWeights[population] = (hitWeights[population] or 0) + count * (initialHit + projectiles * overlapChance)
+			end
+		end
 		sequenceTime = sequenceTime + delay
 		if breakdown then
 			t_insert(rows, {
@@ -600,7 +617,6 @@ local function calcMineSequence(activeSkill, output, breakdown)
 	local sampledMines = simulated and simulated.detonations or mineCount
 	local averageProjectiles = sampledMines > 0 and projectileTotal / sampledMines or 0
 	sequenceTime = simulated and simulated.time or sequenceTime
-	local initialHit = output.AreaOfEffectRadius > 0 and 1 or 0
 	local hitsPerMine = initialHit + averageProjectiles * overlapChance
 	-- Restarting a one-mine sequence is still limited by the Detonate Mines action cooldown.
 	local detonationRate = simulated and (automated and simulated.rate or simulated.detonations / m_max(detonateSkill.levels[1].cooldown, simulated.elapsed)) or mineCount / m_max(detonateSkill.levels[1].cooldown, sequenceTime)
@@ -798,6 +814,7 @@ local function calcMineSequence(activeSkill, output, breakdown)
 			}
 		end
 	end
+	return hitWeights, automated and simulated.timePopulations or nil
 end
 
 -- Performs all offensive calculations
@@ -2361,8 +2378,54 @@ function calcs.offence(env, actor, activeSkill)
 	end
 	-- Eldritch Battery adds maximum Energy Shield to the Mana available for payable-cost damage.
 	output.ManaCostPayablePool = (output.ManaUnreserved or 0) + (modDB:Flag(nil, "EnergyShieldProtectsMana") and output.EnergyShield or 0)
+	local mineHitWeights, mineTimeWeights
 	if skillFlags.mine and skillData.mineSequence then
-		calcMineSequence(activeSkill, output, breakdown)
+		mineHitWeights, mineTimeWeights = calcMineSequence(activeSkill, output, breakdown)
+	end
+	local mineEnemyDB, mineCountOverride
+	if mineHitWeights then
+		mineEnemyDB = new("ModDB"):ModDB(enemyDB)
+		mineCountOverride = modLib.createMod("Multiplier:ActiveMineCount", "OVERRIDE", 0, "Mine simulation")
+		mineEnemyDB:AddMod(mineCountOverride)
+	end
+	-- Evaluate each integer population separately so per-mine caps and additive damage taken remain intact.
+	local function enemyDamageTaken(cfg, isDot, ...)
+		if not mineEnemyDB then
+			return enemyDB:Sum("INC", cfg, ...)
+		end
+		local total, weightTotal = 0, 0
+		for population, weight in pairs(isDot and mineTimeWeights or mineHitWeights) do
+			mineCountOverride.value = population
+			total = total + mineEnemyDB:Sum("INC", cfg, ...) * weight
+			weightTotal = weightTotal + weight
+		end
+		if weightTotal > 0 then
+			return total / weightTotal
+		end
+		mineCountOverride.value = 0
+		return mineEnemyDB:Sum("INC", cfg, ...)
+	end
+	if mineEnemyDB then
+		local withoutMines = mineEnemyDB:Sum("INC", skillCfg, "DamageTaken")
+		output.MineDamageTakenAtHit = enemyDamageTaken(skillCfg, false, "DamageTaken") - withoutMines
+		output.MineDamageTakenOverTime = enemyDamageTaken(skillCfg, true, "DamageTaken") - withoutMines
+		if breakdown then
+			breakdown.MineDamageTakenAtHit = {
+				s_format("%.3f%% increased damage taken from simulated nearby mines.", output.MineDamageTakenAtHit),
+				"Each detonation is weighted by its initial hit and expected overlapping projectile hits.",
+				"Per-mine limits are applied to each sampled population before averaging.",
+				"Assumes the live pool, including the detonating and re-arming mines, is within debuff range.",
+				"Samples immediately before detonation; projectile travel and final-use animation lifetime are not simulated.",
+				"Aura activity during detonation/re-arming is an estimate, not verified GGG runtime timing.",
+				"Replaces the legacy Active Mines count only for this skill's increased damage taken calculations.",
+			}
+			breakdown.MineDamageTakenOverTime = {
+				s_format("%.3f%% increased damage taken from simulated nearby mines.", output.MineDamageTakenOverTime),
+				"Time-weighted population after tick events, including time with no mines.",
+				"Per-mine limits are applied before averaging; this is average debuff uptime, not ailment snapshotting.",
+				"Assumes continuous damage over the sample; does not correlate individual ailment durations with mine timing.",
+			}
+		end
 	end
 
 	-- account for Sacrificial Zeal
@@ -3993,7 +4056,7 @@ function calcs.offence(env, actor, activeSkill)
 						local resist = 0
 						local pen = 0
 						local sourceRes = damageType
-						local takenInc = enemyDB:Sum("INC", cfg, "DamageTaken", damageType.."DamageTaken")
+						local takenInc = enemyDamageTaken(cfg, false, "DamageTaken", damageType.."DamageTaken")
 						local takenMore = enemyDB:More(cfg, "DamageTaken", damageType.."DamageTaken")
 						-- Check if player is supposed to ignore a damage type, or if it's ignored on enemy side
 						local useThisResist = function(damageType)
@@ -5094,7 +5157,7 @@ function calcs.offence(env, actor, activeSkill)
 				local effMult = 1
 				if env.mode_effective then
 					local resist = m_min(m_max(0, enemyDB:Sum("BASE", nil, "PhysicalDamageReduction")), data.misc.EnemyPhysicalDamageReductionCap)
-					local takenInc = enemyDB:Sum("INC", dotCfg, "DamageTaken", "DamageTakenOverTime", "PhysicalDamageTaken", "PhysicalDamageTakenOverTime")
+					local takenInc = enemyDamageTaken(dotCfg, true, "DamageTaken", "DamageTakenOverTime", "PhysicalDamageTaken", "PhysicalDamageTakenOverTime")
 					local takenMore = enemyDB:More(dotCfg, "DamageTaken", "DamageTakenOverTime", "PhysicalDamageTaken", "PhysicalDamageTakenOverTime")
 					effMult = (1 - resist / 100) * (1 + takenInc / 100) * takenMore
 					globalOutput["BleedEffMult"] = effMult
@@ -5364,7 +5427,7 @@ function calcs.offence(env, actor, activeSkill)
 				local effMult = 1
 				if env.mode_effective then
 					local resist = calcResistForType("Chaos", dotCfg)
-					local takenInc = enemyDB:Sum("INC", dotCfg, "DamageTaken", "DamageTakenOverTime", "ChaosDamageTaken", "ChaosDamageTakenOverTime")
+					local takenInc = enemyDamageTaken(dotCfg, true, "DamageTaken", "DamageTakenOverTime", "ChaosDamageTaken", "ChaosDamageTakenOverTime")
 					local takenMore = enemyDB:More(dotCfg, "DamageTaken", "DamageTakenOverTime", "ChaosDamageTaken", "ChaosDamageTakenOverTime")
 					effMult = (1 - resist / 100) * (1 + takenInc / 100) * takenMore
 					globalOutput["PoisonEffMult"] = effMult
@@ -5705,7 +5768,7 @@ function calcs.offence(env, actor, activeSkill)
 				if env.mode_effective then
 					if skillModList:Flag(cfg, "IgniteToChaos") then
 						local resist = calcResistForType("Chaos", dotCfg)
-						local takenInc = enemyDB:Sum("INC", dotCfg, "DamageTaken", "DamageTakenOverTime", "ChaosDamageTaken", "ChaosDamageTakenOverTime")
+						local takenInc = enemyDamageTaken(dotCfg, true, "DamageTaken", "DamageTakenOverTime", "ChaosDamageTaken", "ChaosDamageTakenOverTime")
 						local takenMore = enemyDB:More(dotCfg, "DamageTaken", "DamageTakenOverTime", "ChaosDamageTaken", "ChaosDamageTakenOverTime")
 						effMult = (1 - resist / 100) * (1 + takenInc / 100) * takenMore
 						globalOutput["IgniteEffMult"] = effMult
@@ -5715,7 +5778,7 @@ function calcs.offence(env, actor, activeSkill)
 						end
 					else
 						local resist = calcResistForType("Fire", dotCfg)
-						local takenInc = enemyDB:Sum("INC", dotCfg, "DamageTaken", "DamageTakenOverTime", "FireDamageTaken", "FireDamageTakenOverTime", "ElementalDamageTaken")
+						local takenInc = enemyDamageTaken(dotCfg, true, "DamageTaken", "DamageTakenOverTime", "FireDamageTaken", "FireDamageTakenOverTime", "ElementalDamageTaken")
 						local takenMore = enemyDB:More(dotCfg, "DamageTaken", "DamageTakenOverTime", "FireDamageTaken", "FireDamageTakenOverTime", "ElementalDamageTaken")
 						effMult = (1 - resist / 100) * (1 + takenInc / 100) * takenMore
 						globalOutput["IgniteEffMult"] = effMult
@@ -5738,7 +5801,7 @@ function calcs.offence(env, actor, activeSkill)
 				if groundMult > 0 then
 					-- Always use fire eff multi
 					local resist = calcResistForType("Fire", dotCfg)
-					local takenInc = enemyDB:Sum("INC", dotCfg, "DamageTaken", "DamageTakenOverTime", "FireDamageTaken", "FireDamageTakenOverTime", "ElementalDamageTaken")
+					local takenInc = enemyDamageTaken(dotCfg, true, "DamageTaken", "DamageTakenOverTime", "FireDamageTaken", "FireDamageTakenOverTime", "ElementalDamageTaken")
 					local takenMore = enemyDB:More(dotCfg, "DamageTaken", "DamageTakenOverTime", "FireDamageTaken", "FireDamageTakenOverTime", "ElementalDamageTaken")
 					local fireEffMult = (1 - resist / 100) * (1 + takenInc / 100) * takenMore
 					local BurningGroundDPSUncapped = baseVal * effectMod * rateMod * fireEffMult * groundMult / 100
@@ -6133,7 +6196,7 @@ function calcs.offence(env, actor, activeSkill)
 				impaleResist = 0
 			end
 			local impaleTakenCfg = { flags = ModFlag.Hit }
-			local impaleTaken = (1 + enemyDB:Sum("INC", impaleTakenCfg, "DamageTaken", "PhysicalDamageTaken", "ReflectedDamageTaken") / 100)
+			local impaleTaken = (1 + enemyDamageTaken(impaleTakenCfg, false, "DamageTaken", "PhysicalDamageTaken", "ReflectedDamageTaken") / 100)
 								* enemyDB:More(impaleTakenCfg, "DamageTaken", "PhysicalDamageTaken", "ReflectedDamageTaken")
 			local impaleDMGModifier = impaleHitDamageMod * (1 - impaleResist / 100) * impaleChance * impaleTaken
 
@@ -6227,7 +6290,7 @@ function calcs.offence(env, actor, activeSkill)
 		local effMult = 1
 		if env.mode_effective then
 			local resist = calcResistForType("Chaos", dotCfg)
-			local takenInc = enemyDB:Sum("INC", nil, "DamageTaken", "DamageTakenOverTime", "ChaosDamageTaken", "ChaosDamageTakenOverTime")
+			local takenInc = enemyDamageTaken(nil, true, "DamageTaken", "DamageTakenOverTime", "ChaosDamageTaken", "ChaosDamageTakenOverTime")
 			local takenMore = enemyDB:More(nil, "DamageTaken", "DamageTakenOverTime", "ChaosDamageTaken", "ChaosDamageTakenOverTime")
 			effMult = (1 - resist / 100) * (1 + takenInc / 100) * takenMore
 			output["DecayEffMult"] = effMult
@@ -6269,7 +6332,7 @@ function calcs.offence(env, actor, activeSkill)
 			local effMult = 1
 			if env.mode_effective then
 				local resist = calcResistForType("Fire", dotTypeCfg)
-				local takenInc = enemyDB:Sum("INC", dotTakenCfg, "DamageTaken", "DamageTakenOverTime", "FireDamageTaken", "FireDamageTakenOverTime", "ElementalDamageTaken")
+				local takenInc = enemyDamageTaken(dotTakenCfg, true, "DamageTaken", "DamageTakenOverTime", "FireDamageTaken", "FireDamageTakenOverTime", "ElementalDamageTaken")
 				local takenMore = enemyDB:More(dotTakenCfg, "DamageTaken", "DamageTakenOverTime", "FireDamageTaken", "FireDamageTakenOverTime", "ElementalDamageTaken")
 				effMult = (1 - resist / 100) * (1 + takenInc / 100) * takenMore
 			end
@@ -6338,7 +6401,7 @@ function calcs.offence(env, actor, activeSkill)
 			--Section handles Enemy Damage Taken based on Configs
 			if env.mode_effective then
 				local resist = 0
-				local takenInc = enemyDB:Sum("INC", dotTakenCfg, "DamageTaken", "DamageTakenOverTime", damageType.."DamageTaken", damageType.."DamageTakenOverTime") + (isElemental[damageType] and enemyDB:Sum("INC", dotTakenCfg, "ElementalDamageTaken") or 0)
+				local takenInc = enemyDamageTaken(dotTakenCfg, true, "DamageTaken", "DamageTakenOverTime", damageType.."DamageTaken", damageType.."DamageTakenOverTime") + (isElemental[damageType] and enemyDB:Sum("INC", dotTakenCfg, "ElementalDamageTaken") or 0)
 				local takenMore = enemyDB:More(dotTakenCfg, "DamageTaken", "DamageTakenOverTime", damageType.."DamageTaken", damageType.."DamageTakenOverTime") * (isElemental[damageType] and enemyDB:More(dotTakenCfg, "ElementalDamageTaken") or 1)
 				if damageType == "Physical" then
 					resist = m_max(0, m_min(enemyDB:Sum("BASE", nil, "PhysicalDamageReduction"), data.misc.EnemyPhysicalDamageReductionCap))

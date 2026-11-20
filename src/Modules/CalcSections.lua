@@ -869,6 +869,8 @@ return {
 	{ label = "Mine Mana Spent", haveOutput = "MineManaSpentRate", { format = "{3:output:MineManaSpentRate}/s", { breakdown = "MineManaSpentRate" }, }, },
 	{ label = "Avg. Simulated Mines", haveOutput = "MineAverageActive", { format = "{3:output:MineAverageActive}", { breakdown = "MineAverageActive" }, }, },
 	{ label = "Peak Simulated Mines", haveOutput = "MinePeakActive", { format = "{0:output:MinePeakActive}", { breakdown = "MinePeakActive" }, }, },
+	{ label = "Mine Debuff (Hits)", haveOutput = "MineDamageTakenAtHit", { format = "{3:output:MineDamageTakenAtHit}%", { breakdown = "MineDamageTakenAtHit" }, }, },
+	{ label = "Mine Debuff (DoT)", haveOutput = "MineDamageTakenOverTime", { format = "{3:output:MineDamageTakenOverTime}%", { breakdown = "MineDamageTakenOverTime" }, }, },
 	{ label = "Sequence Detonations", haveOutput = "MineSequenceCount", { format = "{3:output:MineSequenceCount}", { breakdown = "MineSequenceCount" }, }, },
 	{ label = "Mine Re-arm Time", haveOutput = "MineRearmTime", { format = "{3:output:MineRearmTime}s", { breakdown = "MineRearmTime" }, { modName = "Speed", cfg = "skill" }, }, },
 	{ label = "Detonations / Mine", haveOutput = "MineDetonationsPerMine", { format = "{3:output:MineDetonationsPerMine}", { breakdown = "MineDetonationsPerMine" }, { modName = "MineExtraUses", cfg = "skill" }, }, },
