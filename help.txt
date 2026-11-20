@@ -72,7 +72,18 @@ Required-node locks are saved with each tree and also protect nodes needed to ke
 Stop keeps the best result found so far. "Use Best as New Tree" preserves the original tree.
 Close (or Escape) discards the search. No changes are made unless you use the result.
 This is a local search, not an exhaustive/global optimizer; it can miss improvements requiring other swaps.
-Results depend on your skills, gear and enemy configuration. Review requirements and defensive trade-offs.
+Results must leave non-negative unreserved mana, positive unreserved life, and meet item/gem attribute
+requirements (including Omniscience). These checks cannot be disabled.
+Defence dropdowns offer Unrestricted, Don't reduce, or Cap for elemental/chaos resistance, attack AND
+spell block, spell suppression, and elemental ailment avoidance.
+"Don't reduce" preserves each starting effective resistance/chance separately, even if below cap
+or negative. It does not preserve overcapped resistance or require improvements to reach the cap.
+"Cap" requires capped values (100% suppression/ailment avoidance or immunity for ALL elemental ailments).
+Resistance/block caps cannot be lowered to pass a Cap check.
+"Don't reduce maximum hit taken" keeps every damage type's maximum hit at least at its starting value.
+If the starting tree fails a requirement, the search can still find a feasible branch swap; no invalid
+tree can be applied. Larger swaps may help, but this local search cannot guarantee a feasible result.
+Results depend on your skills, gear and enemy configuration. Review other defensive trade-offs.
 
 Developer Use
 

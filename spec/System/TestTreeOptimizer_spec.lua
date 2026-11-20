@@ -1,6 +1,28 @@
 describe("Tree optimizer", function()
 	local TreeOptimizer = require("Classes.TreeOptimizer")
 	local first, alternative
+	local function feasibleOutput(values)
+		local output = {
+			CombinedDPS = 100, TotalEHP = 100,
+			ManaUnreserved = 100, LifeUnreserved = 100,
+			Str = 100, Dex = 100, Int = 100, Omni = 100,
+			ReqStr = 100, ReqDex = 100, ReqInt = 100, ReqOmni = 100,
+			FireResist = 75, ColdResist = 75, LightningResist = 75, ChaosResist = 75,
+			MissingFireResist = 0, MissingColdResist = 0, MissingLightningResist = 0, MissingChaosResist = 0,
+			BlockChance = 75, BlockChanceMax = 75, SpellBlockChance = 75, SpellBlockChanceMax = 75,
+			SpellSuppressionChance = 100,
+		}
+		for _, ailment in ipairs(data.elementalAilmentTypeList) do
+			output[ailment.."AvoidChance"] = 100
+		end
+		for _, damageType in ipairs({ "Physical", "Fire", "Cold", "Lightning", "Chaos" }) do
+			output[damageType.."MaximumHitTaken"] = 100
+		end
+		for key, value in pairs(values or { }) do
+			output[key] = value
+		end
+		return output
+	end
 
 	before_each(function()
 		newBuild()
@@ -39,7 +61,7 @@ describe("Tree optimizer", function()
 		local optimizer = build.treeTab:CreateTreeOptimizer(goal, 1, "CombinedDPS")
 		optimizer.calculate = function(override)
 			local chosen = override.spec.allocNodes[alternative.id]
-			return { CombinedDPS = chosen and dps or 100, TotalEHP = chosen and ehp or 100 }
+			return feasibleOutput({ CombinedDPS = chosen and dps or 100, TotalEHP = chosen and ehp or 100 })
 		end
 		return finish(optimizer)
 	end
@@ -74,7 +96,7 @@ describe("Tree optimizer", function()
 		build.spec.optimizerLocks[dependent.id] = true
 		local optimizer = build.treeTab:CreateTreeOptimizer("BALANCED", 3, "CombinedDPS")
 		optimizer.calculate = function()
-			return { CombinedDPS = 100, TotalEHP = 100 }
+			return feasibleOutput()
 		end
 		finish(optimizer)
 		assert(optimizer.spec.allocNodes[first.id] and optimizer.spec.allocNodes[dependent.id])
@@ -101,7 +123,7 @@ describe("Tree optimizer", function()
 		build.spec:AllocNode(extension)
 		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 3, "CombinedDPS")
 		optimizer.calculate = function(override)
-			return { CombinedDPS = override.spec.allocNodes[target.id] and 200 or 100, TotalEHP = 100 }
+			return feasibleOutput({ CombinedDPS = override.spec.allocNodes[target.id] and 200 or 100 })
 		end
 		finish(optimizer)
 		assert(optimizer.bestMetrics.dps == 200)
@@ -137,7 +159,7 @@ describe("Tree optimizer", function()
 		build.spec:AllocNode(ascendancy)
 		local optimizer = build.treeTab:CreateTreeOptimizer("BALANCED", 1, "CombinedDPS")
 		optimizer.calculate = function()
-			return { CombinedDPS = 100, TotalEHP = 100 }
+			return feasibleOutput()
 		end
 		finish(optimizer)
 		assert(optimizer.spec.curAscendClassId == build.spec.curAscendClassId)
@@ -154,20 +176,20 @@ describe("Tree optimizer", function()
 	it("uses the chosen Full DPS or minion metric rather than player DPS", function()
 		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "FullDPS")
 		optimizer.calculate = function(override)
-			return {
+			return feasibleOutput({
 				CombinedDPS = override.spec.allocNodes[first.id] and 1000 or 1,
 				FullDPS = override.spec.allocNodes[alternative.id] and 200 or 100,
 				TotalEHP = 100,
-			}
+			})
 		end
 		assert(finish(optimizer).bestMetrics.dps == 200)
 		optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
 		optimizer.calculate = function(override)
-			return {
+			return feasibleOutput({
 				CombinedDPS = 1000,
 				Minion = { CombinedDPS = override.spec.allocNodes[alternative.id] and 200 or 100 },
 				TotalEHP = 100,
-			}
+			})
 		end
 		assert(finish(optimizer).bestMetrics.dps == 200)
 	end)
@@ -175,7 +197,7 @@ describe("Tree optimizer", function()
 	it("discards tentative allocations when stopped", function()
 		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
 		optimizer.calculate = function()
-			return { CombinedDPS = 100, TotalEHP = 100 }
+			return feasibleOutput()
 		end
 		assert(coroutine.resume(optimizer.worker))
 		assert(not optimizer.done)
@@ -187,7 +209,7 @@ describe("Tree optimizer", function()
 	it("rejects an invalid baseline and reports non-finite candidates", function()
 		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
 		optimizer.calculate = function()
-			return { CombinedDPS = 0, TotalEHP = 100 }
+			return feasibleOutput({ CombinedDPS = 0 })
 		end
 		local ok, err = coroutine.resume(optimizer.worker)
 		assert(not ok and err:match("positive DPS and EHP"))
@@ -249,6 +271,250 @@ describe("Tree optimizer", function()
 		local calculate = build.calcsTab:GetMiscCalculator()
 		local output = calculate({ spec = optimizer.spec })
 		assert(math.abs(output.CombinedDPS - optimizer.bestMetrics.dps) < 1e-8)
+	end)
+
+	it("rejects reservation and attribute violations even when DPS is higher", function()
+		for _, invalid in ipairs({
+			{ ManaUnreserved = -1 },
+			{ LifeUnreserved = 0 },
+			{ Str = 99 },
+			{ Dex = 99 },
+			{ Int = 99 },
+			{ Omni = 99 },
+			{ ReqInt = 101 },
+		}) do
+			local optimizer = build.treeTab:CreateTreeOptimizer("BALANCED", 1, "CombinedDPS")
+			optimizer.calculate = function(override)
+				local output = feasibleOutput()
+				if override.spec.allocNodes[alternative.id] then
+					output.CombinedDPS = 200
+					for key, value in pairs(invalid) do
+						output[key] = value
+					end
+				end
+				return output
+			end
+			finish(optimizer)
+			assert(optimizer.improvements == 0 and optimizer.rejected > 0)
+			assert(optimizer.spec.allocNodes[first.id])
+		end
+	end)
+
+	it("allows exact reservation and attribute boundaries", function()
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		optimizer.calculate = function(override)
+			return feasibleOutput({
+				CombinedDPS = override.spec.allocNodes[alternative.id] and 200 or 100,
+				ManaUnreserved = 0, LifeUnreserved = 1,
+			})
+		end
+		assert(finish(optimizer).bestMetrics.dps == 200 and optimizer.bestFeasible)
+	end)
+
+	it("enforces every selected defensive target without lowering caps", function()
+		for _, case in ipairs({
+			{ option = "elementalRes", invalid = { FireResist = 74, MissingFireResist = 1 } },
+			{ option = "elementalRes", invalid = { ColdResist = 74, MissingColdResist = 0 } },
+			{ option = "elementalRes", invalid = { LightningResist = 74, MissingLightningResist = 1 } },
+			{ option = "chaosRes", invalid = { ChaosResist = 74, MissingChaosResist = 1 } },
+			{ option = "block", invalid = { BlockChance = 74 } },
+			{ option = "block", invalid = { SpellBlockChance = 74 } },
+			{ option = "block", invalid = { BlockChance = 65, BlockChanceMax = 65 } },
+			{ option = "block", invalid = { SpellBlockChanceMax = 80 } },
+			{ option = "suppression", invalid = { SpellSuppressionChance = 99.999 } },
+			{ option = "ailmentAvoidance", invalid = { ShockAvoidChance = 99 } },
+			{ option = "ailmentAvoidance", invalid = { BrittleAvoidChance = 99 } },
+			{ option = "maxHit", invalid = { PhysicalMaximumHitTaken = 99 } },
+			{ option = "maxHit", invalid = { ChaosMaximumHitTaken = 99 } },
+		}) do
+			local optimizer = build.treeTab:CreateTreeOptimizer("BALANCED", 1, "CombinedDPS", { [case.option] = true })
+			optimizer.calculate = function(override)
+				local output = feasibleOutput()
+				if override.spec.allocNodes[alternative.id] then
+					output.CombinedDPS = 200
+					for key, value in pairs(case.invalid) do
+						output[key] = value
+					end
+				end
+				return output
+			end
+			finish(optimizer)
+			assert(optimizer.improvements == 0 and optimizer.rejected > 0, case.option)
+		end
+		local allOptions = { elementalRes = "CAP", chaosRes = "CAP", block = "CAP", suppression = "CAP", ailmentAvoidance = "CAP", maxHit = true }
+		local optimizer = build.treeTab:CreateTreeOptimizer("BALANCED", 1, "CombinedDPS", allOptions)
+		optimizer.calculate = function(override)
+			return feasibleOutput({ CombinedDPS = override.spec.allocNodes[alternative.id] and 200 or 100 })
+		end
+		assert(finish(optimizer).bestMetrics.dps == 200)
+	end)
+
+	it("distinguishes don't-reduce, cap and unrestricted for every defence", function()
+		for _, case in ipairs({
+			{
+				option = "elementalRes",
+				start = { FireResist = 40, MissingFireResist = 35, ColdResist = 30, MissingColdResist = 45, LightningResist = 20, MissingLightningResist = 55 },
+				lower = { ColdResist = 29, MissingColdResist = 46 },
+			},
+			{
+				option = "chaosRes",
+				start = { ChaosResist = -60, MissingChaosResist = 135 },
+				lower = { ChaosResist = -61, MissingChaosResist = 136 },
+			},
+			{
+				option = "block",
+				start = { BlockChance = 25, SpellBlockChance = 15 },
+				lower = { SpellBlockChance = 14 },
+			},
+			{
+				option = "suppression",
+				start = { SpellSuppressionChance = 60 },
+				lower = { SpellSuppressionChance = 59 },
+			},
+			{
+				option = "ailmentAvoidance",
+				start = { ShockAvoidChance = 40, FreezeAvoidChance = 60, BrittleAvoidChance = 10 },
+				lower = { BrittleAvoidChance = 9 },
+			},
+		}) do
+			local function run(mode, lower)
+				local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { [case.option] = mode })
+				optimizer.calculate = function(override)
+					local output = feasibleOutput(case.start)
+					if override.spec.allocNodes[alternative.id] then
+						output.CombinedDPS = 200
+						for key, value in pairs(lower and case.lower or { }) do
+							output[key] = value
+						end
+					end
+					return output
+				end
+				return finish(optimizer)
+			end
+			local keep = run("KEEP")
+			assert(keep.bestFeasible and keep.bestMetrics.dps == 200, case.option.." should allow unchanged sub-cap values")
+			local lower = run("KEEP", true)
+			assert(lower.improvements == 0 and lower.rejected > 0, case.option.." should reject a decrease")
+			assert(run("NONE", true).bestMetrics.dps == 200, case.option.." should be unrestricted")
+			local cap = run("CAP")
+			assert(not cap.bestFeasible and cap.improvements == 0, case.option.." should still require the cap")
+		end
+	end)
+
+	it("can find a feasible result from an infeasible start without returning invalid trees", function()
+		local optimizer = build.treeTab:CreateTreeOptimizer("BALANCED", 1, "CombinedDPS", { suppression = true })
+		optimizer.calculate = function(override)
+			return feasibleOutput({
+				CombinedDPS = 100,
+				SpellSuppressionChance = override.spec.allocNodes[alternative.id] and 100 or 99,
+			})
+		end
+		finish(optimizer)
+		assert(optimizer.bestFeasible and optimizer.spec.allocNodes[alternative.id])
+		assert(optimizer.improvements > 0)
+
+		optimizer = build.treeTab:CreateTreeOptimizer("BALANCED", 1, "CombinedDPS", { suppression = true })
+		optimizer.calculate = function()
+			return feasibleOutput({ CombinedDPS = 200, SpellSuppressionChance = 99 })
+		end
+		finish(optimizer)
+		assert(not optimizer.bestFeasible and optimizer.improvements == 0)
+	end)
+
+	it("checks reservation and gem/item requirements from real PoB outputs", function()
+		build.itemsTab:CreateDisplayItemFromRaw("Rarity: NORMAL\nHubris Circlet")
+		local item = build.itemsTab.displayItem
+		build.itemsTab:AddDisplayItem()
+		build.itemsTab.slots.Helmet:SetSelItemId(item.id)
+		build.buildFlag = true
+		runCallback("OnFrame")
+		local optimizer = build.treeTab:CreateTreeOptimizer("BALANCED", 1, "CombinedDPS")
+		local calculate = build.calcsTab:GetMiscCalculator()
+		local itemOutput = calculate({ spec = optimizer.spec })
+		assert(itemOutput.ReqInt > itemOutput.Int and itemOutput.ReqIntItem.source == "Item")
+		assert(optimizer:ConstraintFailure(itemOutput):match("requirement"))
+
+		build.skillsTab:PasteSocketGroup("Fireball 20/0  1\nDetermination 20/0  1\nGrace 20/0  1\nDiscipline 20/0  1\n")
+		build.buildFlag = true
+		runCallback("OnFrame")
+		calculate = build.calcsTab:GetMiscCalculator()
+		local output = calculate({ spec = optimizer.spec })
+		assert(output.ManaUnreserved < 0, "Test must actually over-reserve mana")
+		assert(optimizer:ConstraintFailure(output):match("Mana reservation"))
+		local noReservation = copyTable(output, true)
+		noReservation.ManaUnreserved = 0
+		noReservation.LifeUnreserved = math.max(output.LifeUnreserved, 1)
+		assert(output.ReqInt > output.Int and output.ReqDex > output.Dex)
+		assert(optimizer:ConstraintFailure(noReservation):match("requirement"))
+		assert(output.ReqDexItem.source == "Gem")
+	end)
+
+	it("keeps all popup text and controls inside its window", function()
+		local measure = DrawStringWidth
+		DrawStringWidth = function(height, _, text)
+			local longest = 0
+			for line in text:gmatch("[^\n]+") do
+				longest = math.max(longest, #line:gsub("%^%d", "") * height * 0.65)
+			end
+			return longest
+		end
+		local ok, err = xpcall(function()
+			build.treeTab:OpenOptimizerPopup()
+			local popup = main.popups[1]
+			local left, top = popup:GetPos()
+			local width, height = popup:GetSize()
+			for name, control in pairs(popup.controls) do
+				local x, y = control:GetPos()
+				local w, h = control:GetSize()
+				if control.labelRight then
+					w = w + control.labelWidth
+				elseif name == "info" or name == "status" or name == "warning" then
+					local _, lines = control:GetProperty("label"):gsub("\n", "")
+					h = h * (lines + 1)
+				end
+				assert(x >= left and y >= top and x + w <= left + width and y + h <= top + height, name.." exceeds popup bounds")
+			end
+			popup.controls.suppression:SelByValue("CAP", "value")
+			popup.controls.start:Click()
+			local frames = 0
+			while not popup.controls.status:GetProperty("label"):match("Finished") do
+				popup:Draw(main.viewPort)
+				frames = frames + 1
+				assert(frames < 1000)
+			end
+			assert(not popup.controls.save:GetProperty("enabled"), "Uncapped suppression result must not be applicable")
+			assert(popup.controls.status:GetProperty("label"):match("no feasible tree"))
+			assert(popup.controls.status:GetProperty("width") <= width - 40)
+			popup.controls.close:Click()
+		end, debug.traceback)
+		DrawStringWidth = measure
+		assert(ok, err)
+	end)
+
+	it("passes defence modes to the search and remembers them when reopened", function()
+		build.treeTab:OpenOptimizerPopup()
+		local popup = main.popups[1]
+		local modes = { elementalRes = "KEEP", chaosRes = "NONE", block = "CAP", suppression = "KEEP", ailmentAvoidance = "KEEP" }
+		for key, mode in pairs(modes) do
+			popup.controls[key]:SelByValue(mode, "value")
+		end
+		popup.controls.maxHit.state = true
+		popup.controls.start:Click()
+		for key, mode in pairs(modes) do
+			assert(build.treeTab.optimizerConstraints[key] == mode)
+			assert(not popup.controls[key]:IsEnabled())
+		end
+		assert(not popup.controls.maxHit:IsEnabled())
+		popup.controls.stop:Click()
+		popup.controls.close:Click()
+		build.treeTab:OpenOptimizerPopup()
+		popup = main.popups[1]
+		for key, mode in pairs(modes) do
+			local control = popup.controls[key]
+			assert(control.list[control.selIndex].value == mode)
+		end
+		assert(popup.controls.maxHit.state)
+		popup.controls.close:Click()
 	end)
 
 	it("runs the popup and applies the result only as a new tree", function()

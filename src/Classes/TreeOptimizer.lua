@@ -26,7 +26,7 @@ local function validMetric(value)
 	return type(value) == "number" and value == value and value >= 0 and value < math.huge
 end
 
-function TreeOptimizer.new(spec, calculate, goal, depth, dpsStat)
+function TreeOptimizer.new(spec, calculate, goal, depth, dpsStat, constraints)
 	assert(goal == "BALANCED" or goal == "DPS" or goal == "EHP", "Unknown optimizer goal")
 	assert(type(depth) == "number" and depth >= 1 and depth == math.floor(depth), "Invalid branch depth")
 	assert(dpsStat == "FullDPS" or dpsStat == "CombinedDPS", "Unknown optimizer DPS metric")
@@ -39,6 +39,8 @@ function TreeOptimizer.new(spec, calculate, goal, depth, dpsStat)
 		goal = goal,
 		depth = depth,
 		dpsStat = dpsStat,
+		constraints = copyTable(constraints or { }),
+		targets = { },
 		budget = spec:CountAllocNodes(),
 		required = { },
 		masteries = copyTable(spec.masterySelections),
@@ -93,7 +95,91 @@ function TreeOptimizer:Metrics()
 	if not validMetric(dps) or not validMetric(ehp) then
 		return nil
 	end
-	return { dps = dps, ehp = ehp }
+	return { dps = dps, ehp = ehp }, output
+end
+
+function TreeOptimizer.GetConstraintMode(value)
+	if value == nil or value == false then
+		return "NONE"
+	elseif value == true then
+		return "CAP"
+	end
+	assert(value == "NONE" or value == "KEEP" or value == "CAP", "Unknown defensive constraint mode")
+	return value
+end
+
+function TreeOptimizer:SetTargets(output)
+	local function add(stat, minimum, label, capStat, missingStat)
+		assert(type(minimum) == "number" and minimum == minimum,
+			"Cannot determine optimizer target: "..label)
+		table.insert(self.targets, { stat = stat, minimum = minimum, label = label, capStat = capStat, missingStat = missingStat })
+	end
+	for _, damageType in ipairs({ "Fire", "Cold", "Lightning", "Chaos" }) do
+		local mode = TreeOptimizer.GetConstraintMode(self.constraints[damageType == "Chaos" and "chaosRes" or "elementalRes"])
+		if mode ~= "NONE" then
+			local stat = damageType.."Resist"
+			if mode == "KEEP" then
+				add(stat, output[stat], damageType.." resistance")
+			else
+				local missingStat = "Missing"..stat
+				assert(type(output[stat]) == "number" and type(output[missingStat]) == "number",
+					"Missing calculated resistance cap: "..damageType)
+				add(stat, output[stat] + output[missingStat], damageType.." resistance", nil, missingStat)
+			end
+		end
+	end
+	local blockMode = TreeOptimizer.GetConstraintMode(self.constraints.block)
+	if blockMode ~= "NONE" then
+		add("BlockChance", blockMode == "CAP" and output.BlockChanceMax or output.BlockChance, "Attack block", blockMode == "CAP" and "BlockChanceMax" or nil)
+		add("SpellBlockChance", blockMode == "CAP" and output.SpellBlockChanceMax or output.SpellBlockChance, "Spell block", blockMode == "CAP" and "SpellBlockChanceMax" or nil)
+	end
+	local suppressionMode = TreeOptimizer.GetConstraintMode(self.constraints.suppression)
+	if suppressionMode ~= "NONE" then
+		add("SpellSuppressionChance", suppressionMode == "CAP" and data.misc.SuppressionChanceCap or output.SpellSuppressionChance, "Spell suppression")
+	end
+	local avoidanceMode = TreeOptimizer.GetConstraintMode(self.constraints.ailmentAvoidance)
+	if avoidanceMode ~= "NONE" then
+		for _, ailment in ipairs(data.elementalAilmentTypeList) do
+			add(ailment.."AvoidChance", avoidanceMode == "CAP" and 100 or output[ailment.."AvoidChance"], ailment.." avoidance")
+		end
+	end
+	if self.constraints.maxHit then
+		for _, damageType in ipairs({ "Physical", "Fire", "Cold", "Lightning", "Chaos" }) do
+			local stat = damageType.."MaximumHitTaken"
+			add(stat, output[stat], damageType.." maximum hit taken")
+		end
+	end
+end
+
+function TreeOptimizer:ConstraintFailure(output)
+	if not validMetric(output.ManaUnreserved) then
+		return "Mana reservation exceeds available mana (or mana is not finite)."
+	end
+	if not validMetric(output.LifeUnreserved) or output.LifeUnreserved <= 0 then
+		return "Life reservation must leave positive unreserved life."
+	end
+	for _, attr in ipairs({ "Str", "Dex", "Int", "Omni" }) do
+		local required = output["Req"..attr]
+		if required and (not validMetric(required) or not validMetric(output[attr]) or output[attr] < required) then
+			return attr.." requirement is not met."
+		end
+	end
+	for _, target in ipairs(self.targets) do
+		local value = output[target.stat]
+		local minimum = target.minimum
+		if target.capStat then
+			if not validMetric(output[target.capStat]) then
+				return target.label.." cap is not finite."
+			end
+			minimum = math.max(minimum, output[target.capStat])
+		end
+		if type(value) ~= "number" or value ~= value or value < minimum then
+			return target.label.." is below the required target."
+		end
+		if target.missingStat and (not validMetric(output[target.missingStat]) or output[target.missingStat] > 0) then
+			return target.label.." is not capped."
+		end
+	end
 end
 
 function TreeOptimizer:Score(metrics)
@@ -107,10 +193,14 @@ function TreeOptimizer:Score(metrics)
 end
 
 function TreeOptimizer:Run()
-	self.base = assert(self:Metrics(), "Optimizer requires finite DPS and EHP. Check the build configuration.")
+	local metrics, output = self:Metrics()
+	self.base = assert(metrics, "Optimizer requires finite DPS and EHP. Check the build configuration.")
 	assert(self.base.dps > 0 and self.base.ehp > 0, "Optimizer requires positive DPS and EHP. Select a damaging skill and check the enemy configuration.")
+	self:SetTargets(output)
+	self.initialFailure = self:ConstraintFailure(output)
+	self.bestFeasible = not self.initialFailure
 	self.bestMetrics = self.base
-	self.bestScore = self:Score(self.base)
+	self.bestScore = self.bestFeasible and self:Score(self.base) or -math.huge
 	local seen = { [allocationKey(self.best)] = true }
 	while true do
 		self.pass = self.pass + 1
@@ -172,18 +262,21 @@ function TreeOptimizer:Run()
 				local key = allocationKey(self.spec.allocNodes)
 				if not seen[key] and self:IsValid() then
 					seen[key] = true
-					local metrics = self:Metrics()
+					local metrics, output = self:Metrics()
 					self.tested = self.tested + 1
-					if metrics then
+					local failure = not metrics and "DPS or EHP is not finite." or self:ConstraintFailure(output)
+					if metrics and not failure then
 						local score = self:Score(metrics)
 						if score > self.bestScore + 1e-9 then
 							self.best = copyTable(self.spec.allocNodes, true)
 							self.bestMetrics = metrics
 							self.bestScore = score
+							self.bestFeasible = true
 							self.improvements = self.improvements + 1
 						end
 					else
 						self.rejected = self.rejected + 1
+						self.lastRejection = failure
 					end
 				end
 				coroutine.yield()
