@@ -22,7 +22,7 @@ local ItemDBClass = newClass("ItemDBControl", "ListControl")
 ---@param rect Rect?
 ---@param itemsTab ItemsTab
 ---@param db ItemDBData
----@param dbType "RARE"|"UNIQUE"
+---@param dbType "RARE"|"UNIQUE"|"VISCERA"
 function ItemDBClass:ItemDBControl(anchor, rect, itemsTab, db, dbType)
 	self:ListControl(anchor, rect, 16, "VERTICAL", false)
 	self.itemsTab = itemsTab
@@ -35,7 +35,7 @@ function ItemDBClass:ItemDBControl(anchor, rect, itemsTab, db, dbType)
 	}
 	self.sortDropList = { }
 	self.sortOrder = { }
-	self.sortMode = "NAME"
+	self.sortMode = dbType == "VISCERA" and "CombinedDPS" or "NAME"
 	self.leaguesAndTypesLoaded = false
 	self.leagueList = { "Any league", "No league" }
 	self.typeList = { "Any type", "Armour", "Jewellery", "One Handed Melee", "Two Handed Melee" }
@@ -43,17 +43,25 @@ function ItemDBClass:ItemDBControl(anchor, rect, itemsTab, db, dbType)
 		-- Wickerman (3.30)
 		"Head", "Body", "Arm", "Leg"
 	}
-	local baseY = dbType == "RARE" and -22 or -62
+	if dbType == "VISCERA" then
+		self.slotList = { "Any slot", "Head", "Body", "Arm", "Leg" }
+	end
+	local baseY = dbType == "RARE" and -22 or dbType == "VISCERA" and -42 or -62
 	self.controls.slot = new("DropDownControl"):DropDownControl({"BOTTOMLEFT",self,"TOPLEFT"}, {0, baseY, 179, 18}, self.slotList, function(index, value)
 		self.listBuildFlag = true
 	end)
 	self.controls.type = new("DropDownControl"):DropDownControl({"LEFT",self.controls.slot,"RIGHT"}, {2, 0, 179, 18}, self.typeList, function(index, value)
 		self.listBuildFlag = true
 	end)
-	if dbType == "UNIQUE" then
+	if dbType == "UNIQUE" or dbType == "VISCERA" then
 		self.controls.sort = new("DropDownControl"):DropDownControl({"BOTTOMLEFT",self,"TOPLEFT"}, {0, baseY + 20, 179, 18}, self.sortDropList, function(index, value)
 			self:SetSortMode(value.sortMode)
 		end)
+	end
+	if dbType == "VISCERA" then
+		self.controls.sort.tooltipText = "Ranks replacements using the midpoint of each modifier's range (rounded normally), not the average of all possible DPS outcomes.\nOther equipment stays unchanged. With Any slot, uses the best compatible slot.\nCombined DPS includes the selected skill and its minion; choose Full DPS for all included skills."
+		self.controls.rollLabel = new("LabelControl"):LabelControl({"LEFT",self.controls.sort,"RIGHT"}, {8, 0, 0, 14}, "^7Midpoint rolls")
+	elseif dbType == "UNIQUE" then
 		self.controls.league = new("DropDownControl"):DropDownControl({"LEFT",self.controls.sort,"RIGHT"}, {2, 0, 179, 18}, self.leagueList, function(index, value)
 			self.listBuildFlag = true
 		end)
@@ -251,7 +259,18 @@ function ItemDBClass:ListBuilder()
 	local list = { }
 	for id, item in pairs(self.db.list) do
 		if self:DoesItemMatchFilters(item) then
-			t_insert(list, item)
+			if self.dbType == "VISCERA" then
+				local candidate = new("Item"):Item(item.raw)
+				for _, lines in ipairs({ candidate.implicitModLines, candidate.explicitModLines }) do
+					for _, modLine in ipairs(lines) do
+						modLine.range = 0.5
+					end
+				end
+				candidate:BuildAndParseRaw()
+				t_insert(list, candidate)
+			else
+				t_insert(list, item)
+			end
 		end
 	end
 
@@ -259,10 +278,12 @@ function ItemDBClass:ListBuilder()
 		local useFullDPS = self.sortDetail.stat == "FullDPS"
 		local start = GetTime()
 		local calcFunc, calcBase = self.itemsTab.build.calcsTab:GetMiscCalculator(self.build)
+		local selectedSlot = self.controls.slot.selIndex > 1 and self.slotList[self.controls.slot.selIndex]
 		for itemIndex, item in ipairs(list) do
 			item.measuredPower = -math.huge
 			for slotName, slot in pairs(self.itemsTab.slots) do
-				if self.itemsTab:IsItemValidForSlot(item, slotName) and not slot.inactive and (not slot.weaponSet or slot.weaponSet == (self.itemsTab.activeItemSet.useSecondWeaponSet and 2 or 1)) and slot.shown() then
+				if (self.dbType ~= "VISCERA" or not selectedSlot or slotName == selectedSlot)
+					and self.itemsTab:IsItemValidForSlot(item, slotName) and not slot.inactive and (not slot.weaponSet or slot.weaponSet == (self.itemsTab.activeItemSet.useSecondWeaponSet and 2 or 1)) and slot.shown() then
 					local output = calcFunc(item.base.flask and { toggleFlask = item } or item.base.tincture and { toggleTincture = item } or { repSlotName = slotName, repItem = item }, useFullDPS)
 					local measuredPower = data.powerStatList.GetFromOutput(output, self.sortDetail)
 					item.measuredPower = m_max(item.measuredPower, measuredPower)
@@ -315,10 +336,15 @@ function ItemDBClass:Draw(viewPort)
 	end
 	if self.listBuilder and not self.db.loading then
 		local res, errMsg = coroutine.resume(self.listBuilder, self)
+		if not res and self.dbType == "VISCERA" then
+			self.listBuilder = nil
+			self.defaultText = "^1Could not rank Viscera."
+			main:OpenMessagePopup("Viscera Ranking Error", tostring(errMsg))
+		end
 		if launch.devMode and not res then
 			error(errMsg)
 		end
-		if coroutine.status(self.listBuilder) == "dead" then
+		if self.listBuilder and coroutine.status(self.listBuilder) == "dead" then
 			self.listBuilder = nil
 		end
 	end
@@ -332,7 +358,15 @@ end
 
 function ItemDBClass:GetRowValue(column, index, item)
 	if item and column == 1 then
-		return colorCodes[item.rarity] .. item.name
+		local label = colorCodes[item.rarity] .. item.name
+		if self.dbType == "VISCERA" and self.sortDetail and self.sortDetail.stat and item.measuredPower then
+			if item.measuredPower == -math.huge then
+				return label.." ^7(unavailable)"
+			end
+			local value = self.sortDetail.transform and self.sortDetail.transform(item.measuredPower) or item.measuredPower
+			return label..string.format(" ^7(%.4g)", value)
+		end
+		return label
 	end
 end
 

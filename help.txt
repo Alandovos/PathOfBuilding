@@ -61,6 +61,16 @@ Up/Down arrow	Select previous/next tree respectively
 Alt + RMB	Lock/unlock an allocated node as required by the tree optimizer (gold L marker)
 Ctrl + Alt + RMB	Block/unblock a passive for the tree optimizer (red X marker)
 
+Viscera ranking:
+
+In Items, choose "Import from: Viscera". The list defaults to sorting by Combined DPS.
+Use the sort dropdown for Full DPS, minion-only stats, defensive stats, or Name.
+Each candidate uses midpoint modifier rolls, with normal game rounding; this is not an average of DPS across all rolls.
+Ranking replaces the selected compatible slot, or uses the best compatible slot with "Any slot".
+Other equipment is kept in place. Tooltips and imported candidates use the same midpoint rolls.
+Candidates without an available compatible slot are marked unavailable. Rankings follow the active skill and Configuration.
+This is a stat comparison, not a recommendation that an item improves overall boss survivability.
+
 Optimize Tree:
 
 Use "Optimize Tree" at the bottom of the Tree tab after loading a character.
