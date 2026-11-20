@@ -85,15 +85,30 @@ This is a local search, not an exhaustive/global optimizer; it can miss improvem
 Results must leave non-negative unreserved mana, positive unreserved life, and meet item/gem attribute
 requirements (including Omniscience). These checks cannot be disabled.
 Allowable-reduction sliders range from 0% to 100% for elemental/chaos resistance, attack AND spell
-block, spell suppression, elemental ailment avoidance, and available mana (unreserved).
+block, spell suppression, elemental ailment avoidance, and casting headroom (mana).
 0% permits a fixed 0.5% reduction tolerance; 100% removes that optional requirement.
 Reductions are relative to each starting value, not percentage points or the last accepted tree.
 Negative resistance can fall by the selected percentage of its absolute starting value.
 Grouped stats are checked separately. These preserve effective values, not overcap, and do not force
 uncapped defences to reach their caps. Even the tolerance can allow losing full ailment avoidance.
-Defence sliders default to 100% (unrestricted); available mana defaults to 0% allowable reduction.
-Available mana protects starting unreserved capacity, not mana remaining during continuous casting.
-It does not guarantee recovery or emergency-skill affordability, or fix an already empty starting pool.
+All allowable-reduction sliders default to 0%. Explicit choices are remembered while the tree tab is open.
+Casting headroom checks separate burst-capacity and sustained-recovery ratios, not just pool size.
+Burst demand includes one use of each recurring skill plus one movement, one guard and the most
+expensive other on-demand skill. Repeated demand includes the selected skill at full calculated
+cadence, enabled triggered skills, and ongoing skill drains. Guaranteed every-second-use refunds
+reduce sustained demand, not the upfront burst budget.
+Automated Pyroclast includes peak first-detonation reservation from unrestricted throwing samples,
+including extra-use/re-arm timing. It restores the selected skill's static mine-reservation snapshot.
+0% preserves each starting ratio within 0.5%, but never below 1 (the complete modeled budget).
+An unsafe starting tree must improve to feasibility; it is not silently approved as the baseline.
+Positive allowable reductions can relax that budget, and 100% disables the headroom requirement.
+There is no simulated protected reserve or early stop to throwing. Sustained recovery must fund
+full-cadence spending indefinitely, so a large initial pool cannot hide a recurring deficit.
+This is a conservative budget estimate using configured costs/rates and regeneration, not an
+exact action scheduler. Manual utility use frequency is unknown; repeated utility spam, flask
+timing, hit-based recovery/drains, random trigger clustering and Life/ES payment are not guaranteed.
+Energy Shield payment and unsupported mine-reservation timing are explicitly reported as unchecked
+models that require disabling the casting-headroom constraint to optimize.
 "Don't reduce maximum hit taken" keeps every damage type's maximum hit at least at its starting value.
 If the starting tree fails a requirement, the search can still find a feasible branch swap; no invalid
 tree can be applied. Larger swaps may help, but this local search cannot guarantee a feasible result.

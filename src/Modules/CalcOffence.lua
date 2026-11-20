@@ -341,7 +341,7 @@ function calcs.calcTotemLife(env, activeSkill)
 	return life, lifeMod
 end
 
-local function simulateMineSequences(output, mineLimit, cooldown, detonationTime, acceleration, options)
+function calcs.simulateMineSequences(output, mineLimit, cooldown, detonationTime, acceleration, options)
 	local tickRate = data.misc.ServerTickRate
 	local manual = options.preloadCount ~= nil
 	local ticks = manual and m_ceil(m_min(30, options.duration) * tickRate) or m_floor(30 * tickRate)
@@ -359,6 +359,7 @@ local function simulateMineSequences(output, mineLimit, cooldown, detonationTime
 	local detonations, sequences, sequenceTime, reused, thrown, lastTick = 0, 0, 0, 0, 0, 0
 	local activeMineTicks, peakMines, expired, replaced, spent, remaining = 0, 0, 0, 0, 0, 0
 	local completedThrows, manaWaitTicks, manaSpent = 0, 0, 0
+	local peakReservedMines = 0
 	-- Average four trigger phases; supply is batched, with fractional extra mines carried between throws.
 	for phase = 0, phases - 1 do
 		local nextTrigger = phase == 0 and 0 or m_floor(triggerTicks * phase / 4)
@@ -430,13 +431,12 @@ local function simulateMineSequences(output, mineLimit, cooldown, detonationTime
 					removeMine(1)
 					replaced = replaced + 1
 				end
-				t_insert(mines, { ready = tick, expires = tick + lifetimeTicks, uses = 1 + options.extraUses, reserving = options.mana ~= nil })
-				if mana then
-					reservedMines = reservedMines + 1
-				end
+				t_insert(mines, { ready = tick, expires = tick + lifetimeTicks, uses = 1 + options.extraUses, reserving = true })
+				reservedMines = reservedMines + 1
 			end
 			produced = supplied
 			peakMines = m_max(peakMines, #mines)
+			peakReservedMines = m_max(peakReservedMines, reservedMines)
 			-- Existing sequences get priority on ties; a trigger starts another sequence, not a reset.
 			for index = #chains, 1, -1 do
 				local chain = chains[index]
@@ -508,6 +508,7 @@ local function simulateMineSequences(output, mineLimit, cooldown, detonationTime
 		thrown = thrown,
 		averageMines = ticks > 0 and activeMineTicks / (phases * ticks) or 0,
 		peakMines = peakMines,
+		peakReservedMines = peakReservedMines,
 		expired = expired,
 		replaced = replaced,
 		spent = spent,
@@ -571,13 +572,20 @@ local function calcMineSequence(activeSkill, output, breakdown)
 			}
 		end
 	end
-	local simulated = (automated or extraUses > 0) and simulateMineSequences(output, mineLimit, automationCooldown or detonateSkill.levels[1].cooldown, detonationTime, acceleration, {
+	local simulationOptions = {
 		extraUses = extraUses,
 		rearmTime = rearmTime,
 		duration = mineDuration,
 		preloadCount = not automated and preloadCount or nil,
 		mana = manaOptions,
-	})
+	}
+	if automated then
+		activeSkill.mineSimulation = {
+			limit = mineLimit, cooldown = automationCooldown, detonationTime = detonationTime, acceleration = acceleration,
+			options = simulationOptions,
+		}
+	end
+	local simulated = (automated or extraUses > 0) and calcs.simulateMineSequences(output, mineLimit, automationCooldown or detonateSkill.levels[1].cooldown, detonationTime, acceleration, simulationOptions)
 	local projectileBase = skillModList:Sum("BASE", skillCfg, "ProjectileCount")
 	local projectileMore = skillModList:More(skillCfg, "ProjectileCount")
 	local projectileMin = skillModList:Sum("BASE", skillCfg, "ProjectileCountMinimum")
@@ -2378,6 +2386,8 @@ function calcs.offence(env, actor, activeSkill)
 	end
 	-- Eldritch Battery adds maximum Energy Shield to the Mana available for payable-cost damage.
 	output.ManaCostPayablePool = (output.ManaUnreserved or 0) + (modDB:Flag(nil, "EnergyShieldProtectsMana") and output.EnergyShield or 0)
+	output.ManaCastingCost = (output.ManaCost or 0) + (output.ManaPercentCost or 0) * output.Mana / 100
+	output.ManaCastingUpkeep = (output.ManaPerSecondCost or 0) + (output.ManaPercentPerSecondCost or 0) * output.Mana / 100
 	local mineHitWeights, mineTimeWeights
 	if skillFlags.mine and skillData.mineSequence then
 		mineHitWeights, mineTimeWeights = calcMineSequence(activeSkill, output, breakdown)
@@ -6493,6 +6503,12 @@ function calcs.offence(env, actor, activeSkill)
 	end
 
 	--Calculates and displays cost per second for skills that don't already have one (link skills)
+	output.ManaFullRateCost = output.ManaCastingUpkeep
+	if skillFlags.mine then
+		local rate = output.Cooldown and output.Cooldown > 0 and 1 / output.Cooldown or output.MineLayingSpeed
+		local refund = skillModList:Flag(skillCfg, "Every2UseManaCostRefund") and 0.5 or 1
+		output.ManaFullRateCost = output.ManaFullRateCost + output.ManaCastingCost * rate * refund
+	end
 	for _, resource in ipairs(costs.order) do
 		local val = costs[resource]
 		local EB = env.modDB:Flag(nil, "EnergyShieldProtectsMana")
@@ -6530,6 +6546,11 @@ function calcs.offence(env, actor, activeSkill)
 
 			output[usedResource.."PerSecondHasCost"] = true
 			output[usedResource.."PerSecondCost"] = (output[usedResource.."PerSecondCost"] or 0)+ output[resource.."Cost"] * useSpeed * refundMult
+			if not skillFlags.mine and (usedResource == "Mana" or usedResource == "ManaPercent") then
+				local cost = output[resource.."Cost"] * (usedResource == "ManaPercent" and output.Mana / 100 or 1)
+				local refund = skillModList:Flag(skillCfg, "Every2UseManaCostRefund") and 0.5 or 1
+				output.ManaFullRateCost = output.ManaFullRateCost + cost * useSpeed * refund
+			end
 
 			if breakdown then
 				breakdown[usedResource.."PerSecondCost"] = copyTable(breakdown[resource.."Cost"])

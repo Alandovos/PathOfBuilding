@@ -81,6 +81,94 @@ end
 ---@field toggleTincture Item? Item object used as a table key.
 ---@field conditions string[]?
 ---@field extraJewelFuncs ModList?
+---@field castingHeadroom boolean?
+
+-- A conservative burst allowance plus an indefinite, full-cadence recovery check.
+function calcs.manaCastingHeadroom(skills, pool, recovery, reservation)
+	local burst, sustained, movement, guard, utility = 0, 0, 0, 0, 0
+	for _, skill in ipairs(skills) do
+		if skill.recurring then
+			burst = burst + skill.cost
+			sustained = sustained + skill.sustained
+		else
+			sustained = sustained + skill.upkeep
+			if skill.movement then
+				movement = math.max(movement, skill.cost)
+			elseif skill.guard then
+				guard = math.max(guard, skill.cost)
+			else
+				utility = math.max(utility, skill.cost)
+			end
+		end
+	end
+	local emergency = movement + guard + utility
+	burst = burst + emergency
+	return {
+		ManaCastingCapacityRatio = burst > 0 and (pool - reservation) / burst or reservation > 0 and pool / reservation or 1,
+		ManaCastingSustainRatio = sustained > 0 and recovery / sustained or 1,
+		ManaCastingBurst = burst,
+		ManaCastingEmergency = emergency,
+		ManaCastingSustainedCost = sustained,
+		ManaCastingRecovery = recovery,
+		ManaCastingReservation = reservation,
+	}
+end
+
+function calcs.calcCastingHeadroom(env)
+	local mainSkill = env.player.mainSkill
+	local output = env.player.output
+	local skills, seen = { }, { }
+	local unsupported
+	for _, skill in ipairs(env.player.activeSkillList) do
+		local uuid = cacheSkillUUID(skill, env)
+		if not skill.skillFlags.disable and not seen[uuid] then
+			seen[uuid] = true
+			local evaluated, skillOutput = skill, output
+			if skill ~= mainSkill then
+				local entry = env.triggerSourceCache[uuid]
+				if not entry or not entry.Env then
+					calcs.buildActiveSkill(env, env.mode, skill, uuid, nil, nil, env.triggerSourceCache)
+					entry = assert(GlobalCache.cachedData[env.mode][uuid], "Missing casting-headroom calculation for "..skill.activeEffect.grantedEffect.name)
+					env.triggerSourceCache[uuid] = entry
+				end
+				evaluated = entry.Env.player.mainSkill
+				skillOutput = entry.Env.player.output
+			end
+			if not evaluated.skillFlags.disable then
+				assert(type(skillOutput.ManaCastingCost) == "number" and type(skillOutput.ManaFullRateCost) == "number",
+					"Missing calculated mana costs for "..skill.activeEffect.grantedEffect.name)
+				if (skillOutput.ESCost or 0) > 0 or env.player.modDB:Flag(nil, "EnergyShieldProtectsMana") and (skillOutput.ManaCastingCost > 0 or skillOutput.ManaCastingUpkeep > 0) then
+					unsupported = "ES payment is unsupported."
+				end
+				t_insert(skills, {
+					cost = skillOutput.ManaCastingCost,
+					upkeep = skillOutput.ManaCastingUpkeep,
+					sustained = skillOutput.ManaFullRateCost,
+					recurring = skill == mainSkill or evaluated.skillData.triggered,
+					movement = evaluated.skillTypes[SkillType.Movement] or evaluated.skillTypes[SkillType.Travel],
+					guard = evaluated.skillTypes[SkillType.Guard],
+				})
+			end
+		end
+	end
+	local pool = output.ManaUnreserved
+	local reservation = 0
+	if mainSkill.mineSimulation then
+		local simulation = mainSkill.mineSimulation
+		local options = copyTable(simulation.options)
+		options.mana = nil
+		local sampled = calcs.simulateMineSequences(output, simulation.limit, simulation.cooldown, simulation.detonationTime, simulation.acceleration, options)
+		reservation = sampled.peakReservedMines * (mainSkill.skillData.ManaReservedPerMine or 0)
+		pool = math.min(output.Mana, pool + (mainSkill.skillData.ManaReservedSnapshot or 0))
+	elseif mainSkill.skillFlags.mine and (mainSkill.skillData.ManaReservedPerMine or 0) > 0 then
+		unsupported = "Mine reservation needs automated Average Sequence."
+	end
+	local headroom = calcs.manaCastingHeadroom(skills, pool, output.ManaRegenRecovery, reservation)
+	for stat, value in pairs(headroom) do
+		output[stat] = value
+	end
+	output.ManaCastingUnsupported = unsupported
+end
 
 -- Get calculator for other changes (adding/removing nodes, items, gems, etc)
 ---@param build Build
@@ -115,6 +203,9 @@ function calcs.getMiscCalculator(build)
 			env.player.output.SkillDPS = fullDPS.skills
 			env.player.output.FullDPS = fullDPS.combinedDPS
 			env.player.output.FullDotDPS = fullDPS.TotalDotDPS
+		end
+		if override and override.castingHeadroom then
+			calcs.calcCastingHeadroom(env)
 		end
 		return env.player.output
 	end, env.player.output

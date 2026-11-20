@@ -114,6 +114,15 @@
         Per-mine reservation is captured before applying the legacy Active Mines multiplier. The estimate restores the selected skill's static mine reservation before simulating its actual temporary reservation.
         Life/ES payment and life reservation are explicitly flagged as unsupported for resource limiting; those builds retain the theoretical, resource-unlimited timing estimate.
         Disable the checkbox for the previous resource-unlimited estimate. Manual preloaded-batch and Single Hit calculations are unchanged.
+        The optimizer's separate "Casting headroom (mana)" constraint does not change this DPS simulation.
+        It checks burst affordability after sampled peak temporary reservation at unrestricted throwing cadence,
+        and regeneration against indefinite full-cadence spending, including enabled triggers and ongoing skill drains.
+        Its burst budget adds one use of each recurring skill plus one movement, one guard and the most expensive other on-demand skill.
+        Fully calculated candidate-local costs/rates are used, including percent-mana costs and every-second-use refunds.
+        Each ratio is protected independently; 0% allows 0.5% starting-value tolerance but requires ratios of at least 1.
+        All optimizer reduction sliders default to 0%. Unsafe starts are reported; positive reductions can relax the budget.
+        The check assumes configured trigger rates and regeneration, not timed flasks, hit-based resource events or repeated manual utility spam.
+        It creates no in-game protected reserve. Life/ES payment is not guaranteed; ES payment and unsupported mine timing are explicitly reported.
         Calcs reports the time-weighted average physical mine population after tick events and its peak after throws but before same-tick detonations, including mines waiting to re-arm.
         The population audit accounts for thrown mines as exhausted, expired, replaced at the mine limit, or remaining at the sample boundary.
         For automated Average Sequence, the offensive mine mastery uses simulated nearby mines instead of the legacy Active Mines snapshot.

@@ -267,6 +267,49 @@ describe("TestOffence", function()
 			end
 		end)
 
+		it("audits indefinite full-rate mine spending rather than starvation-limited spending", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			update({ pyroclastMineManaLimited = true, customMods = "Cannot Leech or Regenerate Mana\n+1000 to maximum Mana" })
+			local calculate = build.calcsTab:GetMiscCalculator()
+			local output = calculate({ spec = build.spec, castingHeadroom = true })
+			local demand = output.ManaFullRateCost
+			assert.near(output.ManaCastingCost * output.MineLayingSpeed, demand, 0.000001)
+			assert.is_true(demand > output.ManaPerSecondCost)
+			assert.are.equals(0, output.ManaCastingSustainRatio)
+			assert.is_true(output.ManaCastingCapacityRatio > 1)
+			local starved = update({ customMods = "100% reduced maximum Mana" })
+			assert.are.equals(0, starved.MineActualThrowRate)
+			assert.is_true(starved.ManaFullRateCost > 0, "Zero observed throwing must not erase nominal mana demand")
+		end)
+
+		it("audits temporary first-use reservation independently of static snapshots and mana starvation", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			local gem = build.skillsTab.socketGroupList[1].gemList[1]
+			local capacity, reservation
+			for _, count in ipairs({ 0, 1, 15 }) do
+				gem.skillMineCount = count
+				gem.skillMineCountCalcs = count
+				build.buildFlag = true
+				update({ pyroclastMineManaLimited = true, customMods = "+1000 to maximum Mana" })
+				local output = build.calcsTab:GetMiscCalculator()({ spec = build.spec, castingHeadroom = true })
+				assert.is_true(output.ManaCastingReservation > 0)
+				if capacity then
+					assert.near(capacity, output.ManaCastingCapacityRatio, 0.000001)
+					assert.are.equals(reservation, output.ManaCastingReservation)
+				end
+				capacity, reservation = output.ManaCastingCapacityRatio, output.ManaCastingReservation
+			end
+			local calcs = require("Modules.Calcs")
+			local output = { MineLayingSpeed = 4, MineThrowCount = 1 }
+			local once = calcs.simulateMineSequences(output, 100, 0.6, 0.2, 0.1, { extraUses = 0, rearmTime = 100, duration = 5 })
+			local rearming = calcs.simulateMineSequences(output, 100, 0.6, 0.2, 0.1, { extraUses = 1, rearmTime = 100, duration = 5 })
+			assert.are.equals(once.peakReservedMines, rearming.peakReservedMines)
+			assert.is_true(rearming.peakMines > rearming.peakReservedMines,
+				"Re-arming mines must remain physical mines without reserving again")
+		end)
+
 		it("treats temporary mine reservation separately from spending, releasing it on the first detonation", function()
 			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
 			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")

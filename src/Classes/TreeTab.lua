@@ -696,7 +696,7 @@ function TreeTabClass:OpenOptimizerPopup()
 		{ key = "block", label = "Attack + spell block", tooltip = "Applies separately to starting attack and spell block chances." },
 		{ key = "suppression", label = "Spell suppression", tooltip = "Uses starting suppression chance before lucky/unlucky adjustments." },
 		{ key = "ailmentAvoidance", label = "Elemental ailment avoidance", tooltip = "Applies separately to each elemental ailment's starting avoidance, including alternate ailments.\nEven the 0.5% tolerance can allow losing full avoidance/immunity." },
-		{ key = "availableMana", label = "Available mana (unreserved)", default = 0, tooltip = "Preserves a portion of your starting unreserved mana capacity; defaults to 0% allowable reduction.\nThis is not minimum mana remaining while casting and does not guarantee movement/guard-skill affordability or sustained recovery.\nIf the starting build has zero unreserved mana, preserving it does not create a safety buffer." },
+		{ key = "castingHeadroom", label = "Casting headroom (mana)", tooltip = "Checks both burst affordability and indefinite mana recovery, not just unreserved capacity.\nBudgets one use of each recurring skill plus one movement, one guard and the most expensive other on-demand skill.\nSustained demand includes the selected skill at full cadence, enabled triggers and ongoing skill drains; it never relies on starting with full mana.\nAutomated Pyroclast also accounts for peak temporary mine reservation at unrestricted throwing cadence.\n0% preserves starting headroom (0.5% tolerance) and requires both budget ratios to reach at least 1, even if the starting build is unsafe.\nIncreasing the allowed reduction can relax this safety floor; 100% leaves it unchecked.\nAssumes calculated costs/rates and regeneration. Flask timing, hit-based recovery, unpredictable trigger bursts and Life/ES payment are not guaranteed." },
 	}
 	for index, option in ipairs(constraintOptions) do
 		local y = 178 + (index - 1) * 28
@@ -705,7 +705,7 @@ function TreeTabClass:OpenOptimizerPopup()
 			{ ["SHIFT"] = 0.1, ["CTRL"] = 0.01, ["DEFAULT"] = 0.05 })
 		local saved = self.optimizerConstraints and self.optimizerConstraints[option.key]
 		if saved == nil then
-			saved = option.default or 100
+			saved = 0
 		else
 			saved = TreeOptimizer.GetConstraintMode(saved)
 			if type(saved) ~= "number" then
@@ -716,7 +716,7 @@ function TreeTabClass:OpenOptimizerPopup()
 		control.tooltipFunc = function(tooltip)
 			tooltip:Clear()
 			tooltip:AddLine(14, option.tooltip)
-			tooltip:AddLine(14, "0% allows a fixed 0.5% tolerance. 100% removes this optional requirement.")
+			tooltip:AddLine(14, "0% allows a fixed 0.5% tolerance, but casting headroom must still cover its budget. 100% removes this optional requirement.")
 			tooltip:AddLine(14, "Reduction is relative to the starting value, not percentage points or the last accepted tree.")
 			tooltip:AddLine(14, "Preserves starting values; does not force uncapped defences to reach their caps.")
 		end

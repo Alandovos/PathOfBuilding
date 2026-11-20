@@ -130,7 +130,8 @@ function TreeOptimizer:MasteryEffects(node)
 end
 
 function TreeOptimizer:Metrics()
-	local output = self.calculate({ spec = self.spec })
+	local mode = TreeOptimizer.GetConstraintMode(self.constraints.castingHeadroom)
+	local output = self.calculate({ spec = self.spec, castingHeadroom = mode ~= 100 and mode ~= "NONE" })
 	local dps = output[self.dpsStat]
 	if self.dpsStat == "CombinedDPS" and output.Minion then
 		dps = output.Minion.CombinedDPS
@@ -146,7 +147,9 @@ function TreeOptimizer.GetConstraintMode(value)
 	if type(value) == "number" then
 		assert(value == value and value >= 0 and value <= 100, "Allowable reduction must be between 0 and 100")
 		return value
-	elseif value == nil or value == false then
+	elseif value == nil then
+		return 0
+	elseif value == false then
 		return "NONE"
 	elseif value == true then
 		return "CAP"
@@ -195,8 +198,24 @@ function TreeOptimizer:SetTargets(output)
 			add(avoidanceMode, ailment.."AvoidChance", ailment.." avoidance", nil, nil, 100)
 		end
 	end
-	add(TreeOptimizer.GetConstraintMode(self.constraints.availableMana == nil and 0 or self.constraints.availableMana),
-		"ManaUnreserved", "Available mana (unreserved)")
+	local headroom = TreeOptimizer.GetConstraintMode(self.constraints.castingHeadroom)
+	self.checkCastingHeadroom = headroom ~= 100 and headroom ~= "NONE"
+	if self.checkCastingHeadroom then
+		assert(type(headroom) == "number", "Casting headroom requires an allowable reduction between 0 and 100")
+		for _, stat in ipairs({ "ManaCastingCapacityRatio", "ManaCastingSustainRatio" }) do
+			local value = output[stat]
+			assert(type(value) == "number" and value == value and math.abs(value) < math.huge,
+				"Missing calculated casting headroom: "..stat)
+			local minimum = math.max(1, value) * (1 - math.max(0.5, headroom) / 100)
+			if headroom == 0 then
+				minimum = math.max(1, minimum)
+			end
+			table.insert(self.targets, {
+				stat = stat, minimum = minimum,
+				label = stat == "ManaCastingCapacityRatio" and "Casting headroom (burst capacity)" or "Casting headroom (sustained recovery)",
+			})
+		end
+	end
 	if self.constraints.maxHit then
 		for _, damageType in ipairs({ "Physical", "Fire", "Cold", "Lightning", "Chaos" }) do
 			local stat = damageType.."MaximumHitTaken"
@@ -217,6 +236,9 @@ function TreeOptimizer:ConstraintFailure(output)
 	if not validMetric(output.LifeUnreserved) or output.LifeUnreserved <= 0 then
 		return "Life reservation must leave positive unreserved life."
 	end
+	if self.checkCastingHeadroom and output.ManaCastingUnsupported then
+		return "Casting headroom: "..output.ManaCastingUnsupported.."\nSet to 100% to leave casting headroom unchecked."
+	end
 	for _, attr in ipairs({ "Str", "Dex", "Int", "Omni" }) do
 		local required = output["Req"..attr]
 		if required and (not validMetric(required) or not validMetric(output[attr]) or output[attr] < required) then
@@ -232,7 +254,13 @@ function TreeOptimizer:ConstraintFailure(output)
 			end
 			minimum = math.max(minimum, output[target.capStat])
 		end
-		if type(value) ~= "number" or value ~= value or value < minimum then
+		if type(value) ~= "number" or value ~= value or math.abs(value) == math.huge then
+			return target.label.." is not finite."
+		end
+		if value < minimum then
+			if target.stat == "ManaCastingCapacityRatio" or target.stat == "ManaCastingSustainRatio" then
+				return string.format("%s: %.3g < %.3g required.", target.label, value, minimum)
+			end
 			return target.label.." is below the required target."
 		end
 		if target.missingStat and (not validMetric(output[target.missingStat]) or output[target.missingStat] > 0) then

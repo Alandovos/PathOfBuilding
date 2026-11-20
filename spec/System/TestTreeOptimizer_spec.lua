@@ -5,6 +5,7 @@ describe("Tree optimizer", function()
 		local output = {
 			CombinedDPS = 100, TotalEHP = 100,
 			ManaUnreserved = 100, LifeUnreserved = 100,
+			ManaCastingCapacityRatio = 2, ManaCastingSustainRatio = 2,
 			Str = 100, Dex = 100, Int = 100, Omni = 100,
 			ReqStr = 100, ReqDex = 100, ReqInt = 100, ReqOmni = 100,
 			FireResist = 75, ColdResist = 75, LightningResist = 75, ChaosResist = 75,
@@ -359,7 +360,7 @@ Implicits: 0
 		build.configTab:BuildModList()
 		build.buildFlag = true
 		runCallback("OnFrame")
-		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { castingHeadroom = 100 })
 		local calculate, damageTakenDPS = optimizer.calculate
 		optimizer.calculate = function(override)
 			local output = calculate(override)
@@ -783,16 +784,15 @@ Adds Hollow Palm Technique]])
 		local calculate = build.calcsTab:GetMiscCalculator()
 		local startingMana = calculate({ spec = build.spec }).ManaUnreserved
 		local protected = finish(build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS"))
-		local optimizer = finish(build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { availableMana = 100 }))
+		local optimizer = finish(build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { castingHeadroom = 100 }))
 		assert(optimizer.tested > 0 and optimizer.improvements > 0)
 		assert(optimizer.bestMetrics.dps > optimizer.base.dps)
 		assert(optimizer.bestMetrics.ehp >= optimizer.base.ehp)
-		assert(protected.bestMetrics.dps < optimizer.bestMetrics.dps, "Mana protection should reject this mana-losing swap")
+		assert(protected.bestMetrics.dps == optimizer.bestMetrics.dps, "A mana-free attack should not require unused mana capacity")
 		local output = calculate({ spec = optimizer.spec })
 		assert(math.abs(output.CombinedDPS - optimizer.bestMetrics.dps) < 1e-8)
 		assert(output.ManaUnreserved < startingMana * 0.995,
 			string.format("Expected mana loss: starting %g, optimized %g", startingMana, output.ManaUnreserved))
-		assert(calculate({ spec = protected.spec }).ManaUnreserved >= startingMana * 0.995)
 	end)
 
 	it("rejects reservation and attribute violations even when DPS is higher", function()
@@ -930,7 +930,8 @@ Adds Hollow Palm Technique]])
 			{ option = "block", stat = "SpellBlockChance", start = 75 },
 			{ option = "suppression", stat = "SpellSuppressionChance", start = 100 },
 			{ option = "ailmentAvoidance", stat = "BrittleAvoidChance", start = 100 },
-			{ option = "availableMana", stat = "ManaUnreserved", start = 100 },
+			{ option = "castingHeadroom", stat = "ManaCastingCapacityRatio", start = 2 },
+			{ option = "castingHeadroom", stat = "ManaCastingSustainRatio", start = 2 },
 		}) do
 			local function run(reduction, value)
 				local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { [case.option] = reduction })
@@ -949,13 +950,14 @@ Adds Hollow Palm Technique]])
 		end
 	end)
 
-	it("anchors reduction targets to the initial tree and preserves available mana by default", function()
+	it("anchors reduction targets to the initial tree and preserves both headroom components by default", function()
 		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { elementalRes = 10 })
 		optimizer:SetTargets(feasibleOutput())
-		assert(not optimizer:ConstraintFailure(feasibleOutput({ FireResist = 67.5, ManaUnreserved = 99.5 })))
+		assert(not optimizer:ConstraintFailure(feasibleOutput({ FireResist = 67.5, ManaCastingCapacityRatio = 1.99, ManaCastingSustainRatio = 1.99 })))
 		assert(optimizer:ConstraintFailure(feasibleOutput({ FireResist = 67.499 })))
-		assert(optimizer:ConstraintFailure(feasibleOutput({ ManaUnreserved = 99.499 })):match("Available mana"))
-		local unrestricted = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { availableMana = 100 })
+		assert(optimizer:ConstraintFailure(feasibleOutput({ ManaCastingCapacityRatio = 1.989 })):match("burst capacity"))
+		assert(optimizer:ConstraintFailure(feasibleOutput({ ManaCastingSustainRatio = 1.989 })):match("sustained recovery"))
+		local unrestricted = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { castingHeadroom = 100 })
 		unrestricted:SetTargets(feasibleOutput())
 		assert(not unrestricted:ConstraintFailure(feasibleOutput({ ManaUnreserved = 0 })))
 		assert(unrestricted:ConstraintFailure(feasibleOutput({ ManaUnreserved = -1 })):match("Mana reservation"))
@@ -963,9 +965,142 @@ Adds Hollow Palm Technique]])
 
 	it("rejects invalid allowable reductions", function()
 		for _, value in ipairs({ -1, 101, math.huge, 0 / 0 }) do
-			local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { availableMana = value })
+			local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { castingHeadroom = value })
 			assert(not pcall(function() optimizer:SetTargets(feasibleOutput()) end))
 		end
+	end)
+
+	it("budgets shared recurring costs, emergency utilities and temporary reservation separately", function()
+		local calcs = require("Modules.Calcs")
+		local skills = {
+			{ cost = 10, sustained = 100, recurring = true },
+			{ cost = 20, sustained = 40, recurring = true },
+			{ cost = 30, upkeep = 0, movement = true },
+			{ cost = 25, upkeep = 0, movement = true },
+			{ cost = 40, upkeep = 0, guard = true },
+			{ cost = 5, upkeep = 0 },
+			{ cost = 15, upkeep = 5 },
+		}
+		local output = calcs.manaCastingHeadroom(skills, 400, 290, 170)
+		assert(output.ManaCastingEmergency == 85 and output.ManaCastingBurst == 115)
+		assert(output.ManaCastingSustainedCost == 145)
+		assert(output.ManaCastingCapacityRatio == 2 and output.ManaCastingSustainRatio == 2)
+		local free = calcs.manaCastingHeadroom({}, 0, 0, 0)
+		assert(free.ManaCastingCapacityRatio == 1 and free.ManaCastingSustainRatio == 1)
+		assert(calcs.manaCastingHeadroom({}, 0, 0, 10).ManaCastingCapacityRatio == 0,
+			"Zero casting cost must not hide unaffordable temporary reservation")
+	end)
+
+	it("rejects cost increases and recovery losses even when unreserved mana stays unchanged", function()
+		local calcs = require("Modules.Calcs")
+		for _, change in ipairs({ "cost", "recovery" }) do
+			local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+			optimizer.calculate = function(override)
+				local candidate = override.spec.allocNodes[alternative.id]
+				local cost = candidate and change == "cost" and 20 or 10
+				local recovery = candidate and change == "recovery" and 98 or 100
+				local headroom = calcs.manaCastingHeadroom({ { cost = cost, sustained = cost * 5, recurring = true } }, 100, recovery, 20)
+				headroom.CombinedDPS = candidate and 200 or 100
+				return feasibleOutput(headroom)
+			end
+			finish(optimizer)
+			assert(optimizer.improvements == 0 and optimizer.rejected > 0, change.." was not protected")
+		end
+	end)
+
+	it("requires an unsafe baseline to cover its budget instead of preserving its deficit", function()
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		optimizer:SetTargets(feasibleOutput({ ManaCastingCapacityRatio = 0.4, ManaCastingSustainRatio = 0.4 }))
+		assert(optimizer:ConstraintFailure(feasibleOutput({ ManaCastingCapacityRatio = 0.999 })):match("burst capacity"))
+		assert(optimizer:ConstraintFailure(feasibleOutput({ ManaCastingSustainRatio = 0.999 })):match("sustained recovery"))
+		assert(not optimizer:ConstraintFailure(feasibleOutput({ ManaCastingCapacityRatio = 1, ManaCastingSustainRatio = 1 })))
+		local relaxed = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { castingHeadroom = 50 })
+		relaxed:SetTargets(feasibleOutput({ ManaCastingCapacityRatio = 0.4, ManaCastingSustainRatio = 0.4 }))
+		assert(not relaxed:ConstraintFailure(feasibleOutput({ ManaCastingCapacityRatio = 0.5, ManaCastingSustainRatio = 0.5 })))
+		assert(relaxed:ConstraintFailure(feasibleOutput({ ManaCastingSustainRatio = 0.499 })))
+		for _, invalid in ipairs({ math.huge, -math.huge, 0 / 0 }) do
+			assert(optimizer:ConstraintFailure(feasibleOutput({ ManaCastingCapacityRatio = invalid })):match("not finite"))
+			assert(optimizer:ConstraintFailure(feasibleOutput({ ManaCastingSustainRatio = invalid })):match("not finite"))
+		end
+		optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		optimizer.calculate = function(override)
+			local ratio = override.spec.allocNodes[alternative.id] and 1 or 0.4
+			return feasibleOutput({ ManaCastingCapacityRatio = ratio, ManaCastingSustainRatio = ratio })
+		end
+		finish(optimizer)
+		assert(optimizer.bestFeasible and optimizer.improvements > 0 and optimizer.spec.allocNodes[alternative.id],
+			"An unsafe start must still be able to improve into full budget coverage")
+	end)
+
+	it("reports unsupported payment and only skips the audit when explicitly unrestricted", function()
+		for _, reduction in ipairs({ 0, 100 }) do
+			local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { castingHeadroom = reduction })
+			optimizer.calculate = function(override)
+				assert(override.castingHeadroom == (reduction ~= 100))
+				return feasibleOutput({ ManaCastingUnsupported = "ES payment is unsupported." })
+			end
+			finish(optimizer)
+			assert(optimizer.bestFeasible == (reduction == 100))
+			if reduction == 0 then
+				assert(optimizer.initialFailure:match("ES payment is unsupported"))
+			end
+		end
+	end)
+
+	it("uses modified utility costs and real triggered cadence without leaking candidate caches", function()
+		build.skillsTab:PasteSocketGroup("Fireball 1/0  1")
+		build.skillsTab:PasteSocketGroup("Flame Dash 1/0  1")
+		build.skillsTab:PasteSocketGroup("Molten Shell 1/0  1")
+		build.skillsTab:PasteSocketGroup("Steelskin 1/0  1\nAutomation 20/0  1")
+		local function headroom(mods)
+			build.configTab.input.customMods = mods or ""
+			build.configTab:BuildModList()
+			build.buildFlag = true
+			runCallback("OnFrame")
+			return build.calcsTab:GetMiscCalculator()({ spec = build.spec, castingHeadroom = true })
+		end
+		local baseline = headroom()
+		assert(baseline.ManaCastingEmergency > 0 and baseline.ManaCastingBurst > baseline.ManaCastingEmergency)
+		local cheaper = headroom("50% reduced Mana Cost of Skills")
+		assert(cheaper.ManaUnreserved == baseline.ManaUnreserved)
+		assert(cheaper.ManaCastingBurst < baseline.ManaCastingBurst)
+		assert(cheaper.ManaCastingSustainedCost < baseline.ManaCastingSustainedCost)
+		assert(headroom().ManaCastingBurst == baseline.ManaCastingBurst)
+		local slowerRecovery = headroom("50% reduced Mana Regeneration Rate")
+		assert(slowerRecovery.ManaUnreserved == baseline.ManaUnreserved)
+		assert(slowerRecovery.ManaCastingSustainRatio < baseline.ManaCastingSustainRatio)
+		build.skillsTab.socketGroupList[4].enabled = false
+		local noTrigger = headroom()
+		assert(noTrigger.ManaCastingSustainedCost < baseline.ManaCastingSustainedCost,
+			"Enabled Automation must contribute its actual triggered mana spending")
+		build.skillsTab.socketGroupList[2].enabled = false
+		build.skillsTab.socketGroupList[3].enabled = false
+		local noUtilities = headroom()
+		assert(noUtilities.ManaCastingEmergency == 0 and noUtilities.ManaCastingBurst < noTrigger.ManaCastingBurst)
+		assert(noUtilities.ManaCastingSustainedCost == noTrigger.ManaCastingSustainedCost,
+			"On-demand utilities must not be assumed continuously spammed")
+		local refunded = headroom("Every second time you Cast each Spell, gain Mana equal to its Upfront Cost")
+		assert(refunded.ManaCastingCost == noUtilities.ManaCastingCost and refunded.ManaCastingBurst == noUtilities.ManaCastingBurst)
+		assert(math.abs(refunded.ManaFullRateCost * 2 - noUtilities.ManaFullRateCost) < 1e-8,
+			"Guaranteed refunds reduce recurring spending, not upfront affordability")
+		assert(headroom("Eldritch Battery").ManaCastingUnsupported:match("ES payment"))
+	end)
+
+	it("converts percentage costs and includes enabled ongoing drains from other skills", function()
+		build.skillsTab:PasteSocketGroup("Manabond 1/0  1")
+		build.skillsTab:PasteSocketGroup("Bladefall of Trarthus 1/0  1")
+		local function headroom()
+			build.buildFlag = true
+			runCallback("OnFrame")
+			return build.calcsTab:GetMiscCalculator()({ spec = build.spec, castingHeadroom = true })
+		end
+		local withDrain = headroom()
+		assert(withDrain.ManaPercentCost > 0)
+		assert(math.abs(withDrain.ManaCastingCost - withDrain.ManaCost - withDrain.ManaPercentCost * withDrain.Mana / 100) < 1e-8)
+		build.skillsTab.socketGroupList[2].enabled = false
+		local withoutDrain = headroom()
+		assert(math.abs(withDrain.ManaCastingSustainedCost - withoutDrain.ManaCastingSustainedCost - withDrain.Mana * 0.05) < 1e-8,
+			"Bladefall of Trarthus's enabled 5%-mana-per-second drain must contribute even when it is not selected")
 	end)
 
 	it("can find a feasible result from an infeasible start without returning invalid trees", function()
@@ -1060,9 +1195,10 @@ Adds Hollow Palm Technique]])
 	it("passes reduction sliders to the search and remembers them when reopened", function()
 		build.treeTab:OpenOptimizerPopup()
 		local popup = main.popups[1]
-		assert(popup.controls.availableMana.val == 0)
-		assert(popup.controls.elementalRes.val == 1)
-		local reductions = { elementalRes = 0, chaosRes = 100, block = 10, suppression = 20, ailmentAvoidance = 30, availableMana = 5 }
+		local reductions = { elementalRes = 0, chaosRes = 100, block = 10, suppression = 20, ailmentAvoidance = 30, castingHeadroom = 5 }
+		for key in pairs(reductions) do
+			assert(popup.controls[key].val == 0, key.." must default to 0% allowable reduction")
+		end
 		for key, reduction in pairs(reductions) do
 			popup.controls[key]:SetVal(reduction / 100)
 			assert(popup.controls[key.."Value"]:GetProperty("label") == reduction.."%")
@@ -1093,7 +1229,7 @@ Adds Hollow Palm Technique]])
 		local count = #build.treeTab.specList
 		build.treeTab:OpenOptimizerPopup()
 		local popup = main.popups[1]
-		popup.controls.availableMana:SetVal(1)
+		popup.controls.castingHeadroom:SetVal(1)
 		popup.controls.start:Click()
 		local frames = 0
 		repeat
