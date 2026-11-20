@@ -10,7 +10,8 @@ function TreeOptimizer.CanChange(node, spec, ignoreLocks)
 	return node.type ~= "ClassStart" and node.type ~= "AscendClassStart"
 		and (node.type ~= "Mastery" or node.masteryEffects and #node.masteryEffects > 0)
 		and not (original and original.type == "Mastery" and spec.hashOverrides[node.id])
-		and not node.ascendancyName and node.type ~= "Socket" and not node.isJewelSocket
+		and not node.ascendancyName
+		and not ((node.type == "Socket" or node.isJewelSocket) and spec:GetSocketedJewel(node.id))
 		and not node.isMultipleChoiceOption
 		and (ignoreLocks or not spec.optimizerLocks[node.id])
 end

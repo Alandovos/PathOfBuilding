@@ -70,7 +70,8 @@ Balanced maximizes the product of relative DPS and EHP; it may sacrifice one to 
 Single-metric goals allow up to 0.5% loss in the other metric from its starting value.
 The search exchanges connected branches up to the selected swap size, using the same allocated point count.
 Mastery allocations and selected effects are optimized, without selecting duplicate effects.
-Ascendancies, runegrafts, jewel sockets and socketed jewels are never changed.
+Ascendancies, runegrafts and occupied jewel sockets are never changed.
+Empty jewel sockets can be allocated or refunded; socketed jewels are never changed.
 Passives on cluster jewels in allocated sockets can be reallocated.
 Required-node locks are saved with each tree and also protect nodes needed to keep them connected.
 Node blocks are saved with each tree and exclude both the blocked node and routes through it.

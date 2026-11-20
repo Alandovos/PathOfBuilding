@@ -209,7 +209,7 @@ Added Small Passive Skills grant: 12% increased Fire Damage
 		assert(optimizer.spec:CountAllocNodes() == 2)
 	end)
 
-	it("keeps locked mastery effects, ascendancies and sockets fixed", function()
+	it("keeps locked mastery effects, ascendancies and occupied sockets fixed", function()
 		build.spec:SelectAscendClass(1)
 		for id in pairs(build.spec.tree.alternate_ascendancies or { }) do
 			if id ~= 0 then
@@ -235,9 +235,17 @@ Added Small Passive Skills grant: 12% increased Fire Damage
 		build.spec:AllocNode(mastery)
 		build.spec.optimizerLocks[mastery.id] = true
 		build.spec:AllocNode(socket)
+		local jewel = new("Item"):Item([[Rarity: RARE
+Optimizer Jewel
+Crimson Jewel
+Implicits: 0
++10 to Strength]])
+		build.itemsTab:AddItem(jewel, true)
+		build.spec.jewels[socket.id] = jewel.id
 		build.spec:AllocNode(ascendancy)
 		local optimizer = build.treeTab:CreateTreeOptimizer("BALANCED", 1, "CombinedDPS")
-		optimizer.calculate = function()
+		optimizer.calculate = function(override)
+			assert(override.spec.allocNodes[socket.id] and override.spec.jewels[socket.id] == jewel.id)
 			return feasibleOutput()
 		end
 		finish(optimizer)
@@ -245,8 +253,9 @@ Added Small Passive Skills grant: 12% increased Fire Damage
 		assert(optimizer.spec.curSecondaryAscendClassId == build.spec.curSecondaryAscendClassId)
 		assert(optimizer.spec.masterySelections[mastery.id] == effect)
 		assert(optimizer.spec.allocNodes[mastery.id] and optimizer.spec.allocNodes[socket.id])
+		assert(optimizer.spec.jewels[socket.id] == jewel.id)
 		for id, node in pairs(build.spec.nodes) do
-			if node.ascendancyName or node.type == "Mastery" or node.type == "Socket" then
+			if node.ascendancyName or node.type == "Mastery" or node.type == "Socket" and build.spec:GetSocketedJewel(id) then
 				assert(not not optimizer.spec.allocNodes[id] == not not build.spec.allocNodes[id])
 			end
 		end
@@ -526,7 +535,7 @@ Added Small Passive Skills grant: 12% increased Fire Damage
 		assert(optimizer.spec.allocNodes[socket.id] and optimizer.spec.jewels[socket.id] == jewel.id)
 	end)
 
-	it("can refund cluster passives but respects cluster locks and keeps sockets fixed", function()
+	it("can refund cluster passives but respects cluster locks and keeps occupied sockets fixed", function()
 		local socket, jewel, graph = socketFireCluster()
 		local target = graph.entranceNode
 		build.spec:AllocNode(target)
@@ -540,15 +549,71 @@ Added Small Passive Skills grant: 12% increased Fire Damage
 		end
 		local optimizer = optimize()
 		assert(optimizer.improvements > 0 and not optimizer.spec.allocNodes[target.id])
-		for _, node in ipairs(graph.nodes) do
-			if node.type == "Socket" then
-				assert(not optimizer.spec.allocNodes[node.id], "Optimizer must not allocate new jewel sockets")
-			end
-		end
 		build.spec.optimizerLocks[target.id] = true
 		optimizer = optimize()
 		assert(optimizer.improvements == 0 and optimizer.spec.allocNodes[target.id])
 	end)
+
+	for _, clustered in ipairs({ false, true }) do
+		for _, zeroId in ipairs({ false, true }) do
+			it("adds and refunds an empty " .. (clustered and "cluster" or "main-tree") .. " socket with " .. (zeroId and "zero" or "no") .. " item ID", function()
+				local nodes = build.spec.nodes
+				if clustered then
+					local _, _, graph = socketFireCluster()
+					nodes = graph.nodes
+				end
+				local socket
+				for _, node in pairs(nodes) do
+					if node.type == "Socket" and node.path and not node.ascendancyName
+						and (not socket or #node.path < #socket.path) then
+						socket = node
+					end
+				end
+				assert(socket)
+				local socketId = socket.id
+				build.spec.jewels[socketId] = zeroId and 0 or nil
+				build.spec:AllocNode(socket)
+				lockAllocated()
+				build.spec.optimizerLocks[socketId] = nil
+				local spareId
+				for id, node in pairs(build.spec.nodes) do
+					if not node.alloc and node.type == "Normal" and node.path and #node.path == 1
+						and TreeOptimizer.CanChange(node, build.spec) then
+						spareId = id
+						build.spec:AllocNode(node)
+						break
+					end
+				end
+				assert(spareId, "No spare passive found")
+				build.spec:DeallocNode(build.spec.nodes[socketId])
+				local function optimize(targetId)
+					local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+					optimizer.calculate = function(override)
+						return feasibleOutput({ CombinedDPS = override.spec.allocNodes[targetId] and 200 or 100 })
+					end
+					return finish(optimizer)
+				end
+				build.spec.optimizerBlocks[socketId] = true
+				local blocked = optimize(socketId)
+				assert(not blocked.spec.allocNodes[socketId] and blocked.spec.allocNodes[spareId])
+				build.spec.optimizerBlocks[socketId] = nil
+				local optimizer = optimize(socketId)
+				assert(optimizer.spec.allocNodes[socketId] and not optimizer.spec.allocNodes[spareId])
+				assert(not build.spec.allocNodes[socketId] and build.spec.allocNodes[spareId])
+				assert(not optimizer.spec:GetSocketedJewel(socketId))
+				build.spec:DeallocNode(build.spec.nodes[spareId])
+				build.spec:AllocNode(build.spec.nodes[socketId])
+				build.spec.optimizerLocks[socketId] = true
+				local locked = optimize(spareId)
+				assert(locked.spec.allocNodes[socketId] and not locked.spec.allocNodes[spareId])
+				build.spec.optimizerLocks[socketId] = nil
+				optimizer = optimize(spareId)
+				assert(not optimizer.spec.allocNodes[socketId] and optimizer.spec.allocNodes[spareId])
+				assert(build.spec.allocNodes[socketId] and not build.spec.allocNodes[spareId])
+				assert(not optimizer.spec:GetSocketedJewel(socketId))
+			end)
+		end
+	end
 
 	it("allocates passives in a nested equipped cluster without disconnecting either jewel", function()
 		local socket, jewel, graph = socketFireCluster()

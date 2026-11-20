@@ -676,7 +676,7 @@ function TreeTabClass:OpenOptimizerPopup()
 		{ label = "EHP, up to 0.5% DPS loss", value = "EHP" },
 	}
 	controls.info = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 20, 0, 14 },
-		"Reallocates points and mastery effects; saves a separate tree.\nAscendancies, runegrafts and jewel sockets/contents stay fixed.\nAlt + right-click: require; Ctrl + Alt + right-click: block/unblock.\nMana/life reservation and item/gem attribute requirements are always enforced.")
+		"Reallocates points and mastery effects; saves a separate tree.\nAscendancies, runegrafts and occupied jewel sockets stay fixed.\nAlt + right-click: require; Ctrl + Alt + right-click: block/unblock.\nMana/life reservation and item/gem attribute requirements are always enforced.")
 	controls.goalLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 93, 0, 16 }, "Goal:")
 	controls.goal = new("DropDownControl"):DropDownControl({ "TOPLEFT", nil, "TOPLEFT" }, { 140, 90, 300, 20 }, goals)
 	controls.depthLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 480, 93, 0, 16 }, "Max swap:")
