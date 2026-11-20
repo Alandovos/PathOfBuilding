@@ -70,6 +70,7 @@ The search exchanges connected branches up to the selected swap size, using the 
 Mastery allocations/effects, ascendancies, jewel sockets and cluster jewel nodes are never changed.
 Required-node locks are saved with each tree and also protect nodes needed to keep them connected.
 Stop keeps the best result found so far. "Use Best as New Tree" preserves the original tree.
+New optimized tree names include a local-time timestamp in yyyymmddhhmmss format.
 Close (or Escape) discards the search. No changes are made unless you use the result.
 This is a local search, not an exhaustive/global optimizer; it can miss improvements requiring other swaps.
 Results must leave non-negative unreserved mana, positive unreserved life, and meet item/gem attribute

@@ -776,7 +776,7 @@ function TreeTabClass:OpenOptimizerPopup()
 			return
 		end
 		local spec = optimizer.spec
-		spec.title = (source.title or "Default").." (optimized)"
+		spec.title = (source.title or "Default").." (optimized "..os.date("%Y%m%d%H%M%S")..")"
 		spec:ResetUndo()
 		t_insert(self.specList, spec)
 		self:SetActiveSpec(#self.specList)
