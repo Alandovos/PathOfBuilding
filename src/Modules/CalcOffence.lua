@@ -341,7 +341,66 @@ function calcs.calcTotemLife(env, activeSkill)
 	return life, lifeMod
 end
 
--- Estimate repeated preloaded mine sequences, including overlap and the slower of supply/detonation.
+local function simulateAutomatedMines(output, mineLimit, cooldown, detonationTime, acceleration)
+	local tickRate = data.misc.ServerTickRate
+	local ticks = m_floor(30 * tickRate)
+	local triggerTicks = m_max(1, m_ceil(cooldown * tickRate))
+	local positions = { }
+	local detonations, sequences, sequenceTime = 0, 0, 0
+	-- Average four trigger phases; supply is batched, with fractional extra mines carried between throws.
+	for phase = 0, 3 do
+		local nextTrigger = phase == 0 and 0 or m_floor(triggerTicks * phase / 4)
+		local produced, pending = 0, 0
+		local chains = { }
+		for tick = 0, ticks - 1 do
+			local throws = m_floor(tick / tickRate * output.MineLayingSpeed + 0.0000001)
+			local supplied = m_floor(throws * output.MineThrowCount + 0.0000001)
+			pending = m_min(mineLimit, pending + supplied - produced)
+			produced = supplied
+			-- Existing sequences get priority on ties; a trigger starts another sequence, not a reset.
+			for index = #chains, 1, -1 do
+				local chain = chains[index]
+				if tick >= chain.nextTick then
+					if pending > 0 then
+						pending = pending - 1
+						detonations = detonations + 1
+						chain.count = chain.count + 1
+						positions[chain.count] = (positions[chain.count] or 0) + 1
+						sequenceTime = sequenceTime + (tick - chain.lastTick) / tickRate
+						chain.lastTick = tick
+						chain.nextTick = tick + m_max(1, m_ceil(detonationTime / (1 + acceleration * (chain.count - 1)) * tickRate))
+					else
+						table.remove(chains, index)
+					end
+				end
+			end
+			if tick >= nextTrigger then
+				nextTrigger = tick + triggerTicks
+				if pending > 0 then
+					pending = pending - 1
+					detonations = detonations + 1
+					sequences = sequences + 1
+					positions[1] = (positions[1] or 0) + 1
+					t_insert(chains, {
+						count = 1,
+						lastTick = tick,
+						nextTick = tick + m_max(1, m_ceil(detonationTime * tickRate)),
+					})
+				end
+			end
+		end
+	end
+	return {
+		positions = positions,
+		detonations = detonations,
+		count = sequences > 0 and detonations / sequences or 0,
+		time = sequences > 0 and sequenceTime / sequences or 0,
+		duration = ticks / tickRate,
+		rate = detonations / (4 * ticks / tickRate),
+	}
+end
+
+-- Estimate overlap and sequence throughput, detecting supported Detonate Mines in the actor's skills.
 local function calcMineSequence(activeSkill, output, breakdown)
 	local skillData = activeSkill.skillData
 	local skillModList = activeSkill.skillModList
@@ -359,6 +418,14 @@ local function calcMineSequence(activeSkill, output, breakdown)
 	local detonateSkill = data.skills.GemDetonateMines
 	local detonateStats = calcLib.buildSkillInstanceStats({ level = 1, quality = 0 }, detonateSkill)
 	local acceleration = detonateStats["display_mine_deontation_mechanics_detonation_speed_+%_final_per_sequence_mine"] / 100
+	local automationCooldown
+	for _, skill in ipairs(activeSkill.actor.activeSkillList) do
+		if skill.activeEffect.grantedEffect.id == "GemDetonateMines" and skill.skillData.triggeredByAutomation and not skill.skillFlags.disable then
+			local cooldown = calcSkillCooldown(skill.skillModList, skill.skillCfg, skill.skillData)
+			automationCooldown = m_min(automationCooldown or m_huge, cooldown)
+		end
+	end
+	local automated = automationCooldown and simulateAutomatedMines(output, mineLimit, automationCooldown, detonationTime, acceleration)
 	local projectileBase = skillModList:Sum("BASE", skillCfg, "ProjectileCount")
 	local projectileMore = skillModList:More(skillCfg, "ProjectileCount")
 	local projectileMin = skillModList:Sum("BASE", skillCfg, "ProjectileCountMinimum")
@@ -366,31 +433,40 @@ local function calcMineSequence(activeSkill, output, breakdown)
 	local singleProjectile = skillModList:Flag(skillCfg, "NoAdditionalProjectiles") or skillModList:Flag(skillCfg, "SingleProjectile")
 	local projectileTotal, sequenceTime = 0, 0
 	local rows = { }
-	for mine = 1, mineCount do
+	local positionCount = mineCount
+	if automated then
+		positionCount = #automated.positions
+		mineCount = automated.count
+	end
+	for mine = 1, positionCount do
 		local additionalProjectiles = m_floor((mine - 1) / skillData.minesPerAdditionalProjectile)
 		local projectiles = singleProjectile and 1 or m_max(projectileMin, m_min(projectileMax, m_floor((projectileBase + additionalProjectiles) * projectileMore)))
 		local delay = mine == 1 and 0 or detonationTime / (1 + acceleration * (mine - 2))
-		projectileTotal = projectileTotal + projectiles
+		local weight = automated and automated.positions[mine] or 1
+		projectileTotal = projectileTotal + projectiles * weight
 		sequenceTime = sequenceTime + delay
 		if breakdown then
 			t_insert(rows, {
 				mine = mine,
+				share = automated and s_format("%.2f%%", 100 * weight / automated.detonations) or nil,
 				projectiles = projectiles,
 				delay = s_format("%.3fs", delay),
 				time = s_format("%.3fs", sequenceTime),
 			})
 		end
 	end
-	local averageProjectiles = mineCount > 0 and projectileTotal / mineCount or 0
+	local sampledMines = automated and automated.detonations or mineCount
+	local averageProjectiles = sampledMines > 0 and projectileTotal / sampledMines or 0
+	sequenceTime = automated and automated.time or sequenceTime
 	local initialHit = output.AreaOfEffectRadius > 0 and 1 or 0
 	local hitsPerMine = initialHit + averageProjectiles * overlapChance
 	-- Restarting a one-mine sequence is still limited by the Detonate Mines action cooldown.
-	local detonationRate = mineCount / m_max(detonateSkill.levels[1].cooldown, sequenceTime)
+	local detonationRate = automated and automated.rate or mineCount / m_max(detonateSkill.levels[1].cooldown, sequenceTime)
 	local throwingRate = output.MineLayingSpeed * output.MineThrowCount
-	local mineRate = m_min(throwingRate, detonationRate)
+	local mineRate = automated and automated.rate or m_min(throwingRate, detonationRate)
 	skillData.timeOverride = mineRate > 0 and 1 / mineRate or m_huge
 	skillData.dpsMultiplier = (skillData.dpsMultiplier or 1) * hitsPerMine
-	activeSkill.infoMessage = "Estimated sequence DPS with automatic overlap (mines centred on enemy)"
+	activeSkill.infoMessage = automated and "Estimated Automation DPS with automatic overlap (30s continuous throwing)" or "Estimated manual sequence DPS with automatic overlap (mines centred on enemy)"
 	output.OverlapChance = overlapChance * 100
 	output.SkillDPSMultiplier = (output.SkillDPSMultiplier or 1) * hitsPerMine
 	output.MineSequenceCount = mineCount
@@ -399,6 +475,9 @@ local function calcMineSequence(activeSkill, output, breakdown)
 	output.MineDetonationTime = detonationTime
 	output.MineDetonationRate = detonationRate
 	output.MineEffectiveRate = mineRate
+	if automated then
+		output.MineAutomationTriggerRate = automationCooldown > 0 and 1 / automationCooldown or data.misc.ServerTickRate
+	end
 	if breakdown then
 		breakdown.OverlapChance = {
 			"Estimate assumes uniform-area projectile landings and a stationary enemy centred on each mine.",
@@ -447,6 +526,43 @@ local function calcMineSequence(activeSkill, output, breakdown)
 			s_format("%.3f mines detonated per second", detonationRate),
 			s_format("= %.3f mines per second (lower of supply and detonation rates)", mineRate),
 		}
+		if automated then
+			breakdown.MineAutomationTriggerRate = {
+				"Enabled Detonate Mines supported by Automation detected.",
+				"Uses Detonate Mines' own cooldown, including local/global cooldown recovery and server-tick rounding.",
+				"Automation's activation cooldown is not the supported spell's trigger interval.",
+				s_format("%.3fs between attempts = %.3f attempts per second", automationCooldown, output.MineAutomationTriggerRate),
+			}
+			breakdown.MineSequenceCount = {
+				s_format("%.3f mines per started sequence, averaged over four %.3fs samples.", mineCount, automated.duration),
+				"Starts without preloaded mines and throws continuously; manual sequence-count configuration is ignored.",
+				"Triggers start competing sequences; existing sequences retain their own acceleration and projectile bonuses.",
+				"Timers are rounded to server ticks; existing sequences act before triggers on ties.",
+				"A sequence ends if no mine is available at its next detonation attempt.",
+				"This is a timing estimate, not verified GGG runtime event ordering.",
+				"Mine expiry, re-arming, resource limits and projectile flight are not simulated.",
+			}
+			breakdown.MineSequenceAverageProjectiles[2] = s_format("%.3f projectiles per detonated mine, weighted by sampled sequence position.", averageProjectiles)
+			breakdown.MineSequenceAverageProjectiles.colList = {
+				{ label = "Sequence Position", key = "mine" },
+				{ label = "Share of Mines", key = "share" },
+				{ label = "Projectiles", key = "projectiles" },
+			}
+			breakdown.MineSequenceTime = {
+				"Average sampled time from first to last detonation of each started sequence.",
+				"Includes sequence acceleration and server-tick rounding; sequences still running at 30s are truncated.",
+				s_format("= %.3fs", sequenceTime),
+			}
+			breakdown.MineDetonationRate = {
+				s_format("%.3f mines detonated per second across competing sequences.", detonationRate),
+				"Estimated from continuous throwing, active mine limit, and automated trigger cadence.",
+			}
+			breakdown.MineEffectiveRate = {
+				s_format("%.3f mines supplied per second", throwingRate),
+				s_format("%.3f mines detonated per second in the timing samples", mineRate),
+				"Excludes mines left undetonated or discarded at the active mine limit.",
+			}
+		end
 	end
 end
 
@@ -3959,7 +4075,7 @@ function calcs.offence(env, actor, activeSkill)
 			output.MineSequenceDamage = output.AverageDamage * output.SkillDPSMultiplier * output.MineSequenceCount
 			if breakdown then
 				breakdown.MineSequenceDamage = {
-					s_format("%.3f average damage per hit * %.3f average hits per mine * %d mines", output.AverageDamage, output.SkillDPSMultiplier, output.MineSequenceCount),
+					s_format("%.3f average damage per hit * %.3f average hits per mine * %.3f mines", output.AverageDamage, output.SkillDPSMultiplier, output.MineSequenceCount),
 					s_format("= %.1f expected hit damage per sequence (excludes ailments)", output.MineSequenceDamage),
 				}
 			end

@@ -97,8 +97,16 @@
         Sequence length defaults to the active mine limit and can be reduced in Configuration. The model assumes repeated preloaded sequences with concurrent throwing and detonation;
         effective mine rate is the lower of mine supply and sequence detonation throughput. The first mine is instant, subsequent intervals accelerate by 10% per preceding interval,
         and sequence restarts respect the Detonate Mines action's base cooldown. It is an estimate, not a simulation of continued throws extending a sequence.
+        Enabled Detonate Mines supported by Automation is detected from the calculated skill list, respecting support compatibility, disabled gems/groups and weapon swaps.
+        Automation uses Detonate Mines' own cooldown (including support level/quality, local/global cooldown recovery, and existing server-tick rounding), matching the shared Automation trigger calculation.
+        In this case the manual sequence count is ignored. A bounded simulation estimates the first 30 seconds of continuous throwing without a preload,
+        averaged over four equally spaced Automation timer phases. Each trigger can start an independent accelerating sequence competing for the available mines;
+        sequence-relative projectile counts are weighted by the sampled detonations, rather than assuming a maximum-length manual sequence.
+        Throws use the calculated average mines per throw, carrying fractional extra mines into later batches. The active mine limit caps the available pool.
+        Detonation timers round up to server ticks, and existing sequences act before new triggers on ties; a sequence ends when its next attempt finds no available mine.
+        These event-ordering assumptions are not verified against GGG's runtime. Sequences still active at 30 seconds are truncated, so this is a finite-window estimate, not an exact steady-state or preloaded burst calculation.
         Mine expiry, resource availability, re-arming, enemy movement, and projectile travel time are not simulated. Calcs shows overlap, per-mine projectiles, sequence timing, rate limits, and expected sequence hit damage.
-        References: [GGG 3.27 patch notes](https://www.pathofexile.com/forum/view-thread/3869068), [mine detonation mechanics](https://www.poewiki.net/wiki/Mine#Detonating_mines).
+        References: [GGG 3.27 patch notes](https://www.pathofexile.com/forum/view-thread/3869068), [mine detonation mechanics](https://www.poewiki.net/wiki/Mine#Detonating_mines), [Detonate Mines and Automation](https://www.poewiki.net/wiki/Detonate_Mines).
     * **CalcPerform.lua**
     * **Calcs.lua**
         Loads other calcs modules.
@@ -108,6 +116,11 @@
         Most of the code here revolves around the mod databases of player and enemy actors. Adds all mods that the two share with each other, as well as all modifiers that are specific to one actor type. Stuff like the base stats of characters, bandits and pantheons get applied here. Builds the list of nodes on the skill tree as well as the mod list for each node, including all mods added, removed or changed by radius jewels, and adds it to the calculation environment. Tracks attribute requirements, finds skills granted by items, checks jewel sockets, radius jewel and abyss jewels, adds flasks. Has special handling for Necromantic Aegis and Dancing Dervish. Counts number of corrupted/Shaper/Elder/etc. items. Processes extra skills granted by items and removes socket groups that no longer have matching items. Gets weapon data, adds granted passives and merges mods of allocated passives. Sets main skill group, builds list of active skills including support gems. Sets the main skill to the default attack if none is selected.
     * **CalcTools.lua**
         Calculates mod values and tally up increased/more modifiers, validates gems and skill types, checks if support gems can apply to active gems, determines gem type and attribute requirements, builds stat table for skill.
+    * **CalcTriggers.lua**
+        Automation triggers each supported spell independently when that spell's own cooldown ends, with the support's cooldown recovery modifiers and existing server-tick rounding.
+        Its 0.60-second activation cooldown controls toggling Automation, not the supported spells. Automation uses the direct cooldown-rate path, not the general multi-spell rotation simulation.
+        The separate Pyroclast timing estimate models mine supply and concurrent accelerating detonation sequences, not an alternative Automation trigger rule.
+        References: [GGG 3.24 patch notes](https://www.pathofexile.com/forum/view-thread/3496784), [PoE Wiki](https://www.poewiki.net/wiki/Automation), [PoEDB gem data](https://poedb.tw/us/Automation).
     * **Common.lua**
         Contains various utilities such as a class library, character encoding converters, MurmurHash non-cryptographic hash function used in the GGPK file, type casts used for working with the GGPK file, JSON-to-Lua converter, utilities for manipulating and printing tables, functions for comparison, rounding, formatting and file manipulation
     * **ConfigOptions.lua**

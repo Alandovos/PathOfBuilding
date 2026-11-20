@@ -1435,6 +1435,26 @@ describe("TestTriggers", function()
 
 		assert.True(build.calcsTab.mainOutput.SkillTriggerRate ~= nil)
 	end)
+
+	for _, case in ipairs({
+		{ level = 1, quality = 0, recovery = 0, cooldowns = { 0.264, 1.32, 0.66 } },
+		{ level = 20, quality = 0, recovery = 0, cooldowns = { 0.231, 1.056, 0.528 } },
+		{ level = 20, quality = 20, recovery = 5, cooldowns = { 0.198, 0.957, 0.495 } },
+		{ level = 20, quality = 20, recovery = 100, cooldowns = { 0.132, 0.528, 0.264 } },
+	}) do
+		it("uses independent spell cooldowns with Automation " .. case.level .. "/" .. case.quality .. " and " .. case.recovery .. "% recovery", function()
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nBlood Rage 20/0  1\nPlague Bearer 20/0  1\nAutomation " .. case.level .. "/" .. case.quality .. "  1")
+			build.configTab.input.customMods = case.recovery .. "% increased Cooldown Recovery Rate"
+			build.configTab:BuildModList()
+			local group = build.skillsTab.socketGroupList[1]
+			for index, cooldown in ipairs(case.cooldowns) do
+				group.mainActiveSkill = index
+				build.buildFlag = true
+				runCallback("OnFrame")
+				assert.near(1 / cooldown, build.calcsTab.mainOutput.SkillTriggerRate, 0.000001)
+			end
+		end)
+	end
 	
 	it("Trigger Svalinn", function()
 		build.itemsTab:CreateDisplayItemFromRaw([[Rarity: UNIQUE

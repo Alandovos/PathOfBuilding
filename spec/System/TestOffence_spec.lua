@@ -161,6 +161,143 @@ describe("TestOffence", function()
 			assert.are.equals(4, build.configTab.input.pyroclastMineSequenceCount)
 			assert.near(expectedDPS, build.calcsTab.mainOutput.TotalDPS, 0.000001)
 		end)
+
+		for _, name in ipairs({ "Pyroclast Mine", "Pyroclast Mine of Sabotage" }) do
+			it("detects linked Automation for " .. name .. " and uses the estimate in Full DPS", function()
+				build.skillsTab:PasteSocketGroup(name .. " 20/0  1")
+				build.skillsTab.socketGroupList[1].includeInFullDPS = true
+				build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+				local output = update({ pyroclastMineSequenceCount = 15 })
+				assert.near(1 / 0.231, output.MineAutomationTriggerRate, 0.000001)
+				assert.is_true(output.MineSequenceCount < 15)
+				assert.is_true(output.MineSequenceAverageProjectiles < 5)
+				assert.is_true(output.MineEffectiveRate > 0)
+				assert.is_true(output.MineEffectiveRate <= output.MineLayingSpeed * output.MineThrowCount)
+				assert.near(output.AverageDamage * output.SkillDPSMultiplier * output.Speed, output.TotalDPS, 0.000001)
+				assert.near(output.CombinedDPS, output.FullDPS, 0.000001)
+				local automatedDPS = output.TotalDPS
+				assert.near(automatedDPS, update({ pyroclastMineSequenceCount = 1 }).TotalDPS, 0.000001)
+			end)
+		end
+
+		it("does not mistake unlinked Automation on another spell for automated mine detonation", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1")
+			build.skillsTab:PasteSocketGroup("Steelskin 20/0  1\nAutomation 20/0  1")
+			local output = update({ pyroclastMineSequenceCount = 4 })
+			assert.is_nil(output.MineAutomationTriggerRate)
+			assert.are.equals(4, output.MineSequenceCount)
+		end)
+
+		it("returns to the manual estimate when Detonate Mines, Automation or their group is disabled", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			local group = build.skillsTab.socketGroupList[2]
+			assert.is_not_nil(update().MineAutomationTriggerRate)
+			for _, target in ipairs({ group.gemList[1], group.gemList[2], group }) do
+				target.enabled = false
+				build.buildFlag = true
+				local output = update({ pyroclastMineSequenceCount = 4 })
+				assert.is_nil(output.MineAutomationTriggerRate)
+				assert.are.equals(4, output.MineSequenceCount)
+				target.enabled = true
+				build.buildFlag = true
+				assert.is_not_nil(update().MineAutomationTriggerRate)
+			end
+		end)
+
+		it("uses Automation level, quality and global cooldown recovery with server-tick breakpoints", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 1/0  1")
+			assert.near(1 / 0.264, update().MineAutomationTriggerRate, 0.000001)
+			local automation = build.skillsTab.socketGroupList[2].gemList[2]
+			automation.level = 20
+			build.buildFlag = true
+			assert.near(1 / 0.231, update().MineAutomationTriggerRate, 0.000001)
+			assert.near(1 / 0.231, update({ customMods = "5% increased Cooldown Recovery Rate" }).MineAutomationTriggerRate, 0.000001)
+			automation.quality = 20
+			build.buildFlag = true
+			assert.near(1 / 0.198, update().MineAutomationTriggerRate, 0.000001)
+			assert.near(1 / 0.132, update({ customMods = "100% increased Cooldown Recovery Rate" }).MineAutomationTriggerRate, 0.000001)
+		end)
+
+		it("uses the same Automation cadence in the mine estimate and shared trigger calculation", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			local attemptRate = update().MineAutomationTriggerRate
+			build.mainSocketGroup = 2
+			build.buildFlag = true
+			local output = update()
+			assert.near(attemptRate, output.SkillTriggerRate, 0.000001)
+			build.mainSocketGroup = 1
+			build.buildFlag = true
+			assert.near(attemptRate, update().MineAutomationTriggerRate, 0.000001)
+		end)
+
+		it("models competing automated sequences and recalculates their projectile mix for throwing and detonation speeds", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1\nMinefield 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			local output = update()
+			local baseProjectiles = output.MineSequenceAverageProjectiles
+			local baseDPS = output.TotalDPS
+			assert.is_true(output.MineThrowCount > 1)
+			assert.is_true(baseProjectiles > 3)
+			assert.is_true(baseProjectiles < 5)
+			assert.is_true(math.abs(update({ customMods = "Mines have 100% increased Detonation Speed" }).MineSequenceAverageProjectiles - baseProjectiles) > 0.000001)
+			output = update({ customMods = "100% increased Mine Throwing Speed" })
+			assert.is_true(output.TotalDPS > baseDPS)
+			assert.is_true(output.MineSequenceAverageProjectiles > baseProjectiles)
+			assert.is_true(output.MineEffectiveRate <= output.MineLayingSpeed * output.MineThrowCount)
+		end)
+
+		it("still detonates the first mine instantly through Automation when subsequent detonation speed is zero", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			local output = update({ customMods = "1000% increased Mine Throwing Speed\nMines have 100% reduced Detonation Speed" })
+			assert.are.equals(1, output.MineSequenceCount)
+			assert.are.equals(3, output.MineSequenceAverageProjectiles)
+			assertNearRelative(1 / 0.231, output.MineEffectiveRate, 0.01, "Instant first mine per automated trigger")
+			assert.is_true(output.TotalDPS > 0)
+			output = update({ customMods = "100% reduced Cooldown Recovery Rate" })
+			assert.are.equals(0, output.MineAutomationTriggerRate)
+			assert.are.equals(0, output.TotalDPS)
+			output = update({ customMods = "100% reduced Mine Throwing Speed" })
+			assert.are.equals(0, output.MineEffectiveRate)
+			assert.are.equals(0, output.TotalDPS)
+		end)
+
+		it("carries fractional extra-mine supply without exceeding the automated throwing rate", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1\nSwift Assembly 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			local output = update()
+			assert.is_not_nil(output.MineAutomationTriggerRate)
+			assert.is_true(output.MineThrowCount > 1)
+			assert.is_true(output.MineThrowCount % 1 ~= 0)
+			assertNearRelative(output.MineLayingSpeed * output.MineThrowCount, output.MineEffectiveRate, 0.03, "Fractional automated mine supply")
+			assert.is_true(output.MineEffectiveRate <= output.MineLayingSpeed * output.MineThrowCount)
+		end)
+
+		it("shows automated sequence breakdowns, survives saving and preserves single-hit mode", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1\nMinefield 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/20  1\nAutomation 20/20  1")
+			local output = update()
+			local expectedDPS = output.TotalDPS
+			assert.near(output.TotalDPS, build.calcsTab.calcsOutput.TotalDPS, 0.000001)
+			build.viewMode = "CALCS"
+			runCallback("OnFrame")
+			local breakdown = build.calcsTab.calcsEnv.player.breakdown
+			assert.is_not_nil(breakdown.MineAutomationTriggerRate)
+			assert.is_true(#breakdown.MineSequenceAverageProjectiles.rowList > 1)
+			local xml = build:SaveDB("Automated Pyroclast")
+			loadBuildFromXML(xml, "Automated Pyroclast")
+			assert.near(expectedDPS, build.calcsTab.mainOutput.TotalDPS, 0.000001)
+			build.skillsTab.socketGroupList[1].gemList[1].skillPart = 2
+			build.buildFlag = true
+			output = update()
+			assert.is_nil(output.MineAutomationTriggerRate)
+			assert.is_nil(output.MineSequenceCount)
+			assert.near(output.AverageDamage * output.MineLayingSpeed * output.MineThrowCount, output.TotalDPS, 0.000001)
+		end)
 	end)
 
 	for _, support in ipairs({

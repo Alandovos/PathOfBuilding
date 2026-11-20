@@ -1253,14 +1253,8 @@ local configTable = {
 		if env.player.mainSkill.activeEffect.grantedEffect.name == "Automation" then
 			env.player.mainSkill.skillFlags.globalTrigger = true
 			env.player.mainSkill.skillFlags.skipEffectiveRate = true
-		else -- Needed to get the cooldown form the active part
-			for _, skill in ipairs(env.player.activeSkillList) do
-				if skill.activeEffect.grantedEffect.name == "Automation" then
-					env.player.mainSkill.triggeredBy.grantedEffect = skill.activeEffect.grantedEffect
-					break
-				end
-			end
 		end
+		-- Automation's activation cooldown does not limit its supported spells.
 		return {triggerOnUse = true,
 				useCastRate = true,
 				source = env.player.mainSkill}

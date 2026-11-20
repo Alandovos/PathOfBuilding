@@ -864,7 +864,8 @@ return {
 		{ modName = "SealGainFrequency", cfg = "skill" }, 
 	}, },
 	-- Mines
-	{ label = "Sequence Mines", haveOutput = "MineSequenceCount", { format = "{0:output:MineSequenceCount}", { breakdown = "MineSequenceCount" }, }, },
+	{ label = "Sequence Mines", haveOutput = "MineSequenceCount", { format = "{3:output:MineSequenceCount}", { breakdown = "MineSequenceCount" }, }, },
+	{ label = "Auto Detonate Attempts", haveOutput = "MineAutomationTriggerRate", { format = "{3:output:MineAutomationTriggerRate}/s", { breakdown = "MineAutomationTriggerRate" }, }, },
 	{ label = "Avg. Proj. / Mine", haveOutput = "MineSequenceAverageProjectiles", { format = "{3:output:MineSequenceAverageProjectiles}", { breakdown = "MineSequenceAverageProjectiles" }, }, },
 	{ label = "Detonation Time", haveOutput = "MineDetonationTime", { format = "{3:output:MineDetonationTime}s", { breakdown = "MineDetonationTime" }, { modName = "MineDetonationSpeed", cfg = "skill" }, }, },
 	{ label = "Sequence Time", haveOutput = "MineSequenceTime", { format = "{3:output:MineSequenceTime}s", { breakdown = "MineSequenceTime" }, }, },
