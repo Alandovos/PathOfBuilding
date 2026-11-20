@@ -114,14 +114,25 @@
         Per-mine reservation is captured before applying the legacy Active Mines multiplier. The estimate restores the selected skill's static mine reservation before simulating its actual temporary reservation.
         Life/ES payment and life reservation are explicitly flagged as unsupported for resource limiting; those builds retain the theoretical, resource-unlimited timing estimate.
         Disable the checkbox for the previous resource-unlimited estimate. Manual preloaded-batch and Single Hit calculations are unchanged.
-        The optimizer's separate "Casting headroom (mana)" constraint does not change this DPS simulation.
+        The optimizer's separate "Casting resources (mana)" safety floor does not change this DPS simulation.
         It checks burst affordability after sampled peak temporary reservation at unrestricted throwing cadence,
         and regeneration against indefinite full-cadence spending, including enabled triggers and ongoing skill drains.
         Its burst budget adds one use of each recurring skill plus one movement, one guard and the most expensive other on-demand skill.
         Fully calculated candidate-local costs/rates are used, including percent-mana costs and every-second-use refunds.
         Each ratio is protected independently; 0% allows 0.5% starting-value tolerance but requires ratios of at least 1.
-        All optimizer reduction sliders default to 0%. Unsafe starts are reported; positive reductions can relax the budget.
-        The optimizer scores "Configured survival" instead of legacy `TotalEHP`; ordinary PoB EHP is unchanged.
+        Enabled optimizer reduction sliders default to 0%. Unsafe starts are reported; positive reductions can relax the budget.
+        Overview defaults to "Damage AND resilience - improve both", build-aware safety and four defensive questions.
+        Advanced controls expose damage metric, swap size, floor enable/disable checkboxes and allowable reductions.
+        Elemental/chaos resistance, mana casting budgets and maximum-hit protection default on; chaos is unlocked for CI-like immunity.
+        Block floors default on at >=50% attack/spell block or with block recovery; suppression at >=50%;
+        ailment-avoidance floors default on when any elemental ailment has full avoidance. Unlocked stats still affect survival.
+        Zero reduction preserves complete suppression/avoidance at 100%; it does not cap already-uncapped defenses.
+        Search-only damage profiles include current/saved Configurations, generic normal Pinnacle,
+        native maximum-roll boss skills (not Memory Game), and a clearly synthetic Feared-style mixed stress test.
+        Isolated ConfigTabs preserve live Configuration and player conditions. Built-in profiles replace incoming-hit
+        inputs and the managed synthetic DoT block; saved profiles use their own settings. Applying a tree does not switch Configuration.
+        The optimizer scores "Pressure resilience" (internally Configured survival) instead of legacy `TotalEHP`; ordinary PoB EHP is unchanged.
+        Four-question cards are max-hit/recovery snapshots, not boss-hit certification, two-hit tests, timed escape or uptime audits.
         Balanced accepts only improvements to both starting DPS and configured survival score, ranked by their relative product.
         A 30-second recovery-aware benchmark integrates survival probability times remaining usable Life/Mana/ES buffer.
         Mean time alive is reported separately and is capped by the benchmark, not a promise of infinite survival.

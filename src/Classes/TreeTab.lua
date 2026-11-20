@@ -18,6 +18,7 @@ local s_format = string.format
 local tradeHelpers = require("Classes.TradeHelpers")
 local dkjson = require "dkjson"
 local TreeOptimizer = require("Classes.TreeOptimizer")
+local OptimizerProfiles = require("Modules.OptimizerProfiles")
 
 ---@class TreeTab: ControlHost
 local TreeTabClass = newClass("TreeTab", "ControlHost")
@@ -656,13 +657,18 @@ function TreeTabClass:OpenSpecManagePopup()
 	})
 end
 
-function TreeTabClass:CreateTreeOptimizer(goal, depth, dpsStat, constraints)
+function TreeTabClass:CreateTreeOptimizer(goal, depth, dpsStat, constraints, profile)
 	local source = self.build.spec
 	local spec = new("PassiveSpec"):PassiveSpec(self.build, source.treeVersion)
 	spec.jewels = copyTable(source.jewels)
 	spec:RestoreUndoState(source:CreateUndoState())
 	spec:BuildClusterJewelGraphs()
-	local calculate = self.build.calcsTab:GetMiscCalculator()
+	local calculate
+	if profile then
+		calculate = OptimizerProfiles.CreateCalculator(self.build, profile)
+	else
+		calculate = self.build.calcsTab:GetMiscCalculator()
+	end
 	return TreeOptimizer.new(spec, calculate, goal, depth, dpsStat, constraints)
 end
 
@@ -670,75 +676,190 @@ function TreeTabClass:OpenOptimizerPopup()
 	local controls = { }
 	local optimizer
 	local source = self.build.spec
+	local advanced = false
+	local profileCalculate, previewOutput, profileFailure
+	local savedOptions = self.optimizerOptions or { }
 	local goals = {
-		{ label = "Balanced DPS and survival", value = "BALANCED" },
-		{ label = "DPS, up to 0.5% survival loss", value = "DPS" },
-		{ label = "Configured survival, up to 0.5% DPS loss", value = "EHP" },
+		{ label = "Damage AND resilience - improve both", value = "BALANCED" },
+		{ label = "More damage - preserve resilience within 0.5%", value = "DPS" },
+		{ label = "More resilience - preserve damage within 0.5%", value = "EHP" },
 	}
 	controls.info = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 20, 0, 14 },
-		"^7Reallocates points, masteries and ascendancy options; saves a new tree.\nAscendancy selections, runegrafts and occupied jewels stay fixed.\nAlt + right-click: require; Ctrl + Alt + right-click: block/unblock.\nMana/life reservation and item/gem attribute requirements are always enforced.")
-	controls.goalLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 93, 0, 16 }, "^7Goal:")
-	controls.goal = new("DropDownControl"):DropDownControl({ "TOPLEFT", nil, "TOPLEFT" }, { 140, 90, 300, 20 }, goals)
+		"^7Find a better passive tree without replacing your original.\nClass, ascendancy selections and socketed jewels stay fixed; required/blocked nodes are respected.")
+	controls.goalLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 73, 0, 16 }, "^7Improve:")
+	controls.goal = new("DropDownControl"):DropDownControl({ "TOPLEFT", nil, "TOPLEFT" }, { 130, 70, 650, 20 }, goals)
+	for index, goal in ipairs(goals) do
+		if goal.value == savedOptions.goal then
+			controls.goal.selIndex = index
+		end
+	end
 	controls.goal.tooltipFunc = function(tooltip)
 		tooltip:Clear()
-		tooltip:AddLine(14, "Configured survival is a 30-second enemy-pressure benchmark, not PoB's hit-only EHP.")
-		tooltip:AddLine(14, "Scores expected time alive weighted by remaining usable Life/Mana/ES buffer. More recovery helps without making lethal hits survivable.")
-		tooltip:AddLine(14, "Uses enemy damage/type/cadence, avoidance, block, suppression, regeneration, player leech/on-hit recovery, recoup, recharge, degeneration and recurring skill costs.")
-		tooltip:AddLine(14, "Deterministic, bounded probability-state approximation. Configured buffs and offensive rates stay active; guard/aegis/ally pools are initial snapshots. Not a guarantee against every combat pattern.")
+		tooltip:AddLine(14, "Resilience is the recovery-aware pressure score, not PoB's hit-only EHP or boss readiness.")
+		tooltip:AddLine(14, "The default requires both damage and resilience to improve over the starting tree.")
+		tooltip:AddLine(14, "Recovery helps between complete hits; it cannot heal a lethal hit after death.")
+		tooltip:AddLine(14, "The score averages resource buffers and survival probability over 30 seconds; avoidance/state compression are approximations.")
 	end
-	controls.depthLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 480, 93, 0, 16 }, "^7Max swap:")
-	controls.depth = new("DropDownControl"):DropDownControl({ "TOPLEFT", nil, "TOPLEFT" }, { 600, 90, 100, 20 }, { 1, 3, 5, 10 })
-	controls.depth.selIndex = 2
-	controls.metricLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 123, 0, 16 }, "^7DPS metric:")
-	controls.metric = new("DropDownControl"):DropDownControl({ "TOPLEFT", nil, "TOPLEFT" }, { 140, 120, 400, 20 }, {
+	local function running()
+		return optimizer and not optimizer.done and not optimizer.failed
+	end
+	local function invalidateResult()
+		if not running() then
+			optimizer = nil
+		end
+	end
+	controls.goal.selFunc = invalidateResult
+	local function refreshProfile()
+		optimizer = nil
+		local err, calculate, output = PCall(OptimizerProfiles.CreateCalculator, self.build, controls.profile.list[controls.profile.selIndex])
+		profileFailure = err
+		profileCalculate, previewOutput = calculate, output
+		if err then
+			main:OpenMessagePopup("Optimizer Damage Profile", "Could not calculate this profile:\n"..tostring(err))
+		end
+	end
+	controls.profileLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 113, 0, 16 }, "^7Damage profile:")
+	controls.profile = new("DropDownControl"):DropDownControl({ "TOPLEFT", nil, "TOPLEFT" }, { 130, 110, 800, 20 }, OptimizerProfiles.List(self.build), refreshProfile)
+	for index, profile in ipairs(controls.profile.list) do
+		if profile.id == savedOptions.profile then
+			controls.profile.selIndex = index
+		end
+	end
+	controls.profile.tooltipFunc = function(tooltip)
+		tooltip:Clear()
+		tooltip:AddLine(14, "Search-only snapshot: selecting a profile does not change your build's active Configuration.")
+		tooltip:AddLine(14, "Built-in profiles preserve your other build conditions; saved Configurations use all their own settings.")
+		tooltip:AddLine(14, "Mixed bosses is a hand-picked stress test, not a reconstruction of The Feared. Memory Game is excluded.")
+		tooltip:AddLine(14, "Profile selection is remembered for this session. Edit saved profiles in the Configuration tab.")
+	end
+	controls.profileInfo = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 144, 0, 12 }, function()
+		return "^7"..controls.profile.list[controls.profile.selIndex].description
+	end)
+	refreshProfile()
+	local function basicShown()
+		return not advanced
+	end
+	local function advancedShown()
+		return advanced
+	end
+	controls.overview = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 190, 130, 24 }, "Overview", function() advanced = false end)
+	controls.advanced = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 160, 190, 160, 24 }, "Advanced controls", function() advanced = true end)
+	controls.metricLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 241, 0, 16 }, "^7Damage to measure:")
+	controls.metric = new("DropDownControl"):DropDownControl({ "TOPLEFT", nil, "TOPLEFT" }, { 180, 238, 470, 20 }, {
 		{ label = "Selected skill (or its minion)", value = "CombinedDPS" },
 		{ label = "Full DPS (skills included in Full DPS)", value = "FullDPS" },
 	})
-	local _, output = self.build.calcsTab:GetMiscCalculator()
-	controls.metric.selIndex = output.FullDPS and output.FullDPS > 0 and 2 or 1
-	controls.constraintsLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 154, 0, 14 }, "^7Allowable reduction from starting values (100% = unrestricted):")
+	controls.metric.selIndex = savedOptions.metric == "CombinedDPS" and 1 or savedOptions.metric == "FullDPS" and 2
+		or previewOutput and previewOutput.FullDPS and previewOutput.FullDPS > 0 and 2 or 1
+	controls.metric.shown, controls.metricLabel.shown = advancedShown, advancedShown
+	controls.constraintsLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 274, 0, 14 }, "^7Optional safety floors: enable a check, then choose its allowable reduction.")
+	controls.constraintsLabel.shown = advancedShown
 	local constraintOptions = {
-		{ key = "elementalRes", label = "Elemental resistances", tooltip = "Applies separately to starting effective Fire, Cold and Lightning resistance, not overcap." },
-		{ key = "chaosRes", label = "Chaos resistance", tooltip = "Uses starting effective Chaos resistance, not overcap.\nFor negative resistance, the allowed decrease is a percentage of its absolute starting value." },
-		{ key = "block", label = "Attack + spell block", tooltip = "Applies separately to starting attack and spell block chances." },
-		{ key = "suppression", label = "Spell suppression", tooltip = "Uses starting suppression chance before lucky/unlucky adjustments." },
-		{ key = "ailmentAvoidance", label = "Elemental ailment avoidance", tooltip = "Applies separately to each elemental ailment's starting avoidance, including alternate ailments.\nEven the 0.5% tolerance can allow losing full avoidance/immunity." },
-		{ key = "castingHeadroom", label = "Casting headroom (mana)", tooltip = "Checks both burst affordability and indefinite mana recovery, not just unreserved capacity.\nBudgets one use of each recurring skill plus one movement, one guard and the most expensive other on-demand skill.\nSustained demand includes the selected skill at full cadence, enabled triggers and ongoing skill drains; it never relies on starting with full mana.\nAutomated Pyroclast also accounts for peak temporary mine reservation at unrestricted throwing cadence.\n0% preserves starting headroom (0.5% tolerance) and requires both budget ratios to reach at least 1, even if the starting build is unsafe.\nIncreasing the allowed reduction can relax this safety floor; 100% leaves it unchecked.\nAssumes calculated costs/rates and regeneration. Flask timing, hit-based recovery, unpredictable trigger bursts and Life/ES payment are not guaranteed." },
+		{ key = "elementalRes", label = "Elemental resistances", tooltip = "Preserves starting effective Fire, Cold and Lightning resistance separately, not overcap. Does not fix uncapped resistance." },
+		{ key = "chaosRes", label = "Chaos resistance", tooltip = "Preserves starting effective Chaos resistance. Automatically unlocked for a 1-Life, chaos-immune build." },
+		{ key = "block", label = "Attack + spell block", tooltip = "Default: protected only at 50%+ attack/spell block, or with recovery on block.\nIncidental block remains part of resilience calculations even when this separate floor is off." },
+		{ key = "suppression", label = "Spell suppression", tooltip = "Default: protected at 50%+ suppression. At 0% allowable reduction, full suppression stays at 100%." },
+		{ key = "ailmentAvoidance", label = "Elemental ailment avoidance", tooltip = "Default: protected if any elemental ailment has full avoidance.\nAt 0% allowable reduction, complete avoidance remains complete. Applies separately to all elemental ailments." },
+		{ key = "castingHeadroom", label = "Casting resources (mana)", tooltip = "Checks burst affordability after peak temporary mine reservation and sustained full-cadence mana recovery.\nIncludes enabled triggers plus movement, guard and utility burst costs.\n0% requires both budgets to be covered, even if the starting build is unsafe.\n100% disables this optional audit. Flask timing, hit-based mana recovery and Life/ES payment are not guaranteed." },
 	}
 	for index, option in ipairs(constraintOptions) do
-		local y = 178 + (index - 1) * 28
-		controls[option.key.."Label"] = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, y + 3, 0, 16 }, "^7"..option.label)
-		local control = new("SliderControl"):SliderControl({ "TOPLEFT", nil, "TOPLEFT" }, { 390, y, 230, 20 }, nil,
+		local y = 300 + (index - 1) * 25
+		local check = new("CheckBoxControl"):CheckBoxControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, y, 18 }, option.label, invalidateResult, option.tooltip)
+		check.labelRight, check.shown = true, advancedShown
+		controls[option.key.."Enabled"] = check
+		local control = new("SliderControl"):SliderControl({ "TOPLEFT", nil, "TOPLEFT" }, { 390, y, 310, 18 }, invalidateResult,
 			{ ["SHIFT"] = 0.1, ["CTRL"] = 0.01, ["DEFAULT"] = 0.05 })
-		local saved = self.optimizerConstraints and self.optimizerConstraints[option.key]
-		if saved == nil then
-			saved = 0
-		else
-			saved = TreeOptimizer.GetConstraintMode(saved)
-			if type(saved) ~= "number" then
-				saved = saved == "NONE" and 100 or 0
-			end
-		end
-		control:SetVal(saved / 100)
+		control.shown = advancedShown
 		control.tooltipFunc = function(tooltip)
 			tooltip:Clear()
 			tooltip:AddLine(14, option.tooltip)
-			tooltip:AddLine(14, "0% allows a fixed 0.5% tolerance, but casting headroom must still cover its budget. 100% removes this optional requirement.")
-			tooltip:AddLine(14, "Reduction is relative to the starting value, not percentage points or the last accepted tree.")
-			tooltip:AddLine(14, "Preserves starting values; does not force uncapped defences to reach their caps.")
+			tooltip:AddLine(14, "0% keeps starting values within 0.5%, but preserves complete suppression/avoidance and requires safe casting budgets.")
+			tooltip:AddLine(14, "Reduction is relative to the original starting value, not percentage points. 100% removes this optional floor.")
 		end
 		controls[option.key] = control
-		controls[option.key.."Value"] = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 640, y + 3, 0, 16 }, function()
-			return s_format("^7%d%%", m_floor(control.val * 100 + 0.5))
+		controls[option.key.."Value"] = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 720, y + 2, 0, 14 }, function()
+			return check.state and s_format("^7%d%% reduction", m_floor(control.val * 100 + 0.5)) or "^7Not locked"
 		end)
+		controls[option.key.."Value"].shown = advancedShown
+		check.enabled = function() return not running() end
+		control.enabled = function() return not running() and check.state end
 	end
-	controls.maxHit = new("CheckBoxControl"):CheckBoxControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 348, 20 }, "Don't reduce maximum hit taken", nil,
-		"Preserve starting Physical, Fire, Cold, Lightning and Chaos maximum hit taken separately.",
-		self.optimizerConstraints and self.optimizerConstraints.maxHit or false)
-	controls.maxHit.labelRight = true
-	controls.status = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 386, 0, 14 }, function()
+	controls.maxHit = new("CheckBoxControl"):CheckBoxControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 452, 18 }, "Preserve large-hit protection", invalidateResult,
+		"Protects each starting damage-type maximum hit. Does not certify survival of a particular boss skill.")
+	controls.maxHit.labelRight, controls.maxHit.shown = true, advancedShown
+	controls.depthLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 600, 453, 0, 14 }, "^7Max swap size:")
+	controls.depth = new("DropDownControl"):DropDownControl({ "TOPLEFT", nil, "TOPLEFT" }, { 730, 450, 180, 20 }, { 1, 3, 5, 10 })
+	controls.depth.selIndex = savedOptions.depth or 2
+	controls.depth.tooltipText = "Spent passive points exchanged per branch. Larger swaps explore more alternatives and take longer. Local search, not a global optimum."
+	controls.depth.shown, controls.depthLabel.shown = advancedShown, advancedShown
+	controls.metric.selFunc, controls.depth.selFunc = invalidateResult, invalidateResult
+	local function applySafety(settings)
+		for _, option in ipairs(constraintOptions) do
+			local mode = TreeOptimizer.GetConstraintMode(settings[option.key])
+			local reduction = type(mode) == "number" and mode or mode == "NONE" and 100 or 0
+			controls[option.key.."Enabled"].state = reduction < 100
+			controls[option.key]:SetVal(reduction < 100 and reduction / 100 or 0)
+		end
+		controls.maxHit.state = settings.maxHit == true
+	end
+	applySafety(self.optimizerConstraints or TreeOptimizer.DefaultConstraints(previewOutput or { }))
+	controls.reset = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 660, 190, 270, 24 }, "Reset build-aware safety defaults", function()
+		invalidateResult()
+		applySafety(TreeOptimizer.DefaultConstraints(previewOutput or { }))
+	end)
+	controls.reset.enabled = function() return not running() and previewOutput ~= nil end
+	controls.safetyLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 236, 0, 14 }, "^7Safety picked for this build")
+	controls.safetyLabel.shown = basicShown
+	controls.safety = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 262, 0, 13 }, function()
+		local lines = { "^7Always: reservation, attributes, legal pathing" }
+		for _, option in ipairs(constraintOptions) do
+			if controls[option.key.."Enabled"].state and controls[option.key].val < 1 then
+				local reduction = m_floor(controls[option.key].val * 100 + 0.5)
+				t_insert(lines, option.label..(reduction == 0 and " protected" or s_format(": %d%% reduction allowed", reduction)))
+			end
+		end
+		if controls.maxHit.state then
+			t_insert(lines, "Large-hit protection preserved")
+		end
+		return t_concat(lines, "\n")
+	end)
+	controls.safety.shown = basicShown
+	controls.safetyInfo = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 390, 0, 12 },
+		"^7Incidental block and incomplete avoidance are not\nlocked by default, but still count toward resilience.\nOverride any safety floor under Advanced controls.")
+	controls.safetyInfo.shown = basicShown
+	controls.questionsLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 490, 236, 0, 14 }, "^7Your four questions - current snapshots")
+	controls.questionsLabel.shown = basicShown
+	local function defences()
+		return optimizer and optimizer.bestMetrics and optimizer.bestMetrics.defences
+			or TreeOptimizer.DefenceSummary(previewOutput or { })
+	end
+	local questions = {
+		function()
+			local values = defences()
+			return s_format("^71. Survive an accidental hit?\nPhysical max %.4g; lowest elemental max %.4g\nSnapshots only, not a boss-specific pass/fail.", values.physical, values.elemental)
+		end,
+		function()
+			local values = defences()
+			return s_format("^72. Recover before the next mistake?\nLife regen %.4g/s; player leech %.4g/s\nPressure score includes recovery; no two-hit test.", values.regen, values.leech)
+		end,
+		function()
+			local values = defences()
+			return s_format("^73. Escape degeneration?\nNet recovery: Life %+.4g/s, ES %+.4g/s\nNo timed escape / moving-without-attacking test.", values.netLife, values.netES)
+		end,
+		function()
+			return "^74. Relying on temporary defenses?\nConfigured guards and flasks may be active.\nNo off-state / uptime audit yet."
+		end,
+	}
+	for index, question in ipairs(questions) do
+		controls["question"..index] = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 490, 262 + (index - 1) * 49, 0, 12 }, question)
+		controls["question"..index].shown = basicShown
+	end
+	controls.status = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 485, 0, 14 }, function()
+		if profileFailure then
+			return "^1Damage profile could not be calculated. Choose another profile."
+		end
 		if not optimizer then
-			return "^7Ready. Balanced requires both starting DPS and survival score to improve.\nRecovery-aware 30-second benchmark uses configured enemy pressure.\nSingle-metric goals allow up to 0.5% loss in the other starting metric.\nOnly feasible results can be applied. Search is local, not global."
+			return "^7Ready. "..goals[controls.goal.selIndex].label..".\nResilience includes recovery; it is not EHP or a boss-readiness certificate.\nProfile selection is search-only; your active Configuration stays unchanged."
 		elseif optimizer.failed then
 			return "^1Search failed. Original tree unchanged; see the error message."
 		elseif not optimizer.base then
@@ -749,48 +870,46 @@ function TreeTabClass:OpenOptimizerPopup()
 		if optimizer.done and not optimizer.bestFeasible then
 			status = "Finished: no feasible tree found"
 		end
-		return s_format("^7%s | Pass %d, branch %d/%d\nTested %d trees; rejected %d infeasible/non-finite\nDPS: %.6g -> %.6g (%+.4g%%)\nSurvival score: %.6g -> %.6g (%+.4g%%)\nMean time alive (30s test): %.2f -> %.2f s%s",
+		return s_format("^7%s | Pass %d, branch %d/%d\nTested %d trees; rejected %d infeasible/non-finite\nDamage: %.6g -> %.6g (%+.4g%%)\nPressure resilience: %.6g -> %.6g (%+.4g%%)\nMean time alive (30s test): %.2f -> %.2f s%s",
 			status, optimizer.pass, optimizer.branch or 0, optimizer.branches or 0, optimizer.tested, optimizer.rejected,
 			optimizer.base.dps, metrics.dps, (metrics.dps / optimizer.base.dps - 1) * 100,
 			optimizer.base.ehp, metrics.ehp, (metrics.ehp / optimizer.base.ehp - 1) * 100,
 			optimizer.base.survivalTime, metrics.survivalTime,
 			not optimizer.bestFeasible and ("\nUnmet: "..optimizer.initialFailure) or "")
 	end)
-	controls.warning = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 474, 0, 14 },
-		"^7Uses your current skills, items and enemy/configuration settings.\nIf no feasible result is found, try larger swaps or fewer optional constraints.\nReview the result for other trade-offs before using it.")
-	local function running()
-		return optimizer and not optimizer.done and not optimizer.failed
-	end
-	controls.start = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 542, 100, 24 }, "Start", function()
+	controls.warning = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 584, 0, 12 },
+		"^7Alt + right-click: require a node. Ctrl + Alt + right-click: block it.\nNo result? Check the unmet safety floor, or try a larger swap under Advanced.")
+	controls.start = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 640, 140, 24 }, "Find a better tree", function()
 		for id in pairs(source.optimizerLocks) do
 			if not source.allocNodes[id] then
 				main:OpenMessagePopup("Required Node Unallocated", "Alt + right-click the unallocated required node to unlock it, or allocate it before optimizing.")
 				return
 			end
 		end
-		self.optimizerConstraints = { }
+		self.optimizerConstraints = { protectCaps = true }
 		for _, option in ipairs(constraintOptions) do
 			local control = controls[option.key]
-			self.optimizerConstraints[option.key] = m_floor(control.val * 100 + 0.5)
+			self.optimizerConstraints[option.key] = controls[option.key.."Enabled"].state and m_floor(control.val * 100 + 0.5) or 100
 		end
 		self.optimizerConstraints.maxHit = controls.maxHit.state
+		self.optimizerOptions = {
+			goal = goals[controls.goal.selIndex].value, profile = controls.profile.list[controls.profile.selIndex].id,
+			depth = controls.depth.selIndex, metric = controls.metric.list[controls.metric.selIndex].value,
+		}
 		optimizer = self:CreateTreeOptimizer(goals[controls.goal.selIndex].value,
-			controls.depth.list[controls.depth.selIndex], controls.metric.list[controls.metric.selIndex].value, self.optimizerConstraints)
+			controls.depth.list[controls.depth.selIndex], controls.metric.list[controls.metric.selIndex].value, self.optimizerConstraints,
+			controls.profile.list[controls.profile.selIndex])
 	end)
-	controls.start.enabled = function() return not running() end
-	controls.goal.enabled = controls.start.enabled
-	controls.depth.enabled = controls.start.enabled
-	controls.metric.enabled = controls.start.enabled
-	for _, option in ipairs(constraintOptions) do
-		controls[option.key].enabled = controls.start.enabled
+	controls.start.enabled = function() return not running() and profileCalculate ~= nil and not profileFailure end
+	for _, control in ipairs({ controls.goal, controls.profile, controls.depth, controls.metric, controls.maxHit }) do
+		control.enabled = function() return not running() end
 	end
-	controls.maxHit.enabled = controls.start.enabled
-	controls.stop = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 135, 542, 100, 24 }, "Stop", function()
+	controls.stop = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 175, 640, 100, 24 }, "Stop", function()
 		optimizer:Stop()
 		optimizer.stopped = true
 	end)
 	controls.stop.enabled = running
-	controls.save = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 250, 542, 300, 24 }, "Use Best as New Tree", function()
+	controls.save = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 290, 640, 300, 24 }, "Use Best as New Tree", function()
 		optimizer:Stop()
 		local metrics, output = optimizer:Metrics()
 		local failure = not metrics and "DPS or configured survival is not finite."
@@ -812,10 +931,10 @@ function TreeTabClass:OpenOptimizerPopup()
 	controls.save.enabled = function()
 		return optimizer and optimizer.done and not optimizer.failed and optimizer.bestFeasible and optimizer.improvements > 0
 	end
-	controls.close = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 600, 542, 100, 24 }, "Close", function()
+	controls.close = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 810, 640, 120, 24 }, "Close", function()
 		main:ClosePopup()
 	end)
-	main:OpenPopup(760, 588, "Optimize Passive Tree", controls, nil, nil, "close", nil, function()
+	main:OpenPopup(960, 690, "Optimize Passive Tree", controls, nil, nil, "close", nil, function()
 		if not running() then
 			return
 		end

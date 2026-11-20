@@ -5,6 +5,32 @@ local TreeOptimizer = { }
 TreeOptimizer.__index = TreeOptimizer
 local minimumMetricRatio = 0.995
 
+function TreeOptimizer.DefaultConstraints(output)
+	local recoveryOnBlock = (output.LifeOnBlock or 0) + (output.ManaOnBlock or 0)
+		+ (output.EnergyShieldOnBlock or 0) + (output.EnergyShieldOnSpellBlock or 0)
+	local block = math.max(output.BlockChance or 0, output.SpellBlockChance or 0) >= 50 or recoveryOnBlock > 0
+	local avoidance = false
+	for _, ailment in ipairs(data.elementalAilmentTypeList) do
+		avoidance = avoidance or (output[ailment.."AvoidChance"] or 0) >= 100
+	end
+	return {
+		elementalRes = 0, chaosRes = output.Life == 1 and output.ChaosResist == 100 and 100 or 0,
+		block = block and 0 or 100,
+		suppression = (output.SpellSuppressionChance or 0) >= 50 and 0 or 100,
+		ailmentAvoidance = avoidance and 0 or 100,
+		castingHeadroom = 0, maxHit = true, protectCaps = true,
+	}
+end
+
+function TreeOptimizer.DefenceSummary(output)
+	local elemental = math.min(output.FireMaximumHitTaken or 0, output.ColdMaximumHitTaken or 0, output.LightningMaximumHitTaken or 0)
+	return {
+		physical = output.PhysicalMaximumHitTaken or 0, elemental = elemental,
+		regen = output.LifeRegenRecovery or 0, leech = output.LifeLeechGainRate or 0,
+		netLife = output.NetLifeRegen or 0, netES = output.NetEnergyShieldRegen or 0,
+	}
+end
+
 function TreeOptimizer.CanChange(node, spec, ignoreLocks)
 	local original = spec.tree.nodes[node.id]
 	return node.type ~= "ClassStart" and node.type ~= "AscendClassStart"
@@ -159,7 +185,7 @@ function TreeOptimizer:Metrics()
 	if not validMetric(dps) or not validMetric(ehp) or not validMetric(output.ConfiguredSurvivalTime) then
 		return nil
 	end
-	return { dps = dps, ehp = ehp, survivalTime = output.ConfiguredSurvivalTime }, output
+	return { dps = dps, ehp = ehp, survivalTime = output.ConfiguredSurvivalTime, defences = TreeOptimizer.DefenceSummary(output) }, output
 end
 
 function TreeOptimizer.GetConstraintMode(value)
@@ -190,6 +216,10 @@ function TreeOptimizer:SetTargets(output)
 			"Cannot determine optimizer target: "..label)
 		if type(mode) == "number" then
 			minimum = minimum - math.abs(minimum) * math.max(0.5, mode) / 100
+			if self.constraints.protectCaps and mode == 0 and output[stat] >= 100
+				and (stat == "SpellSuppressionChance" or stat:match("AvoidChance$")) then
+				minimum = math.max(minimum, 100)
+			end
 		elseif mode == "CAP" then
 			minimum = cap or (capStat and output[capStat]) or (minimum + output[missingStat])
 		end

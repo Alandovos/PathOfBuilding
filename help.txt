@@ -64,10 +64,23 @@ Ctrl + Alt + RMB	Block/unblock a passive for the tree optimizer (red X marker)
 Optimize Tree:
 
 Use "Optimize Tree" at the bottom of the Tree tab after loading a character.
-Choose balanced DPS/survival, maximize DPS, or configured survival, then press Start.
-Choose Full DPS to optimize skills included in Full DPS, or selected skill DPS for the current skill/minion.
+Choose what to improve and a damage profile, then press "Find a better tree".
+The default goal is "Damage AND resilience - improve both". Single-metric goals retain the other metric within 0.5%.
+The Overview shows build-aware safety defaults and four defensive questions, without a wall of sliders.
+Advanced controls expose the damage metric, swap size and optional safety overrides.
+Full DPS measures skills included in Full DPS; selected skill measures the current skill/minion.
+Profiles include the current or another saved Configuration, generic Pinnacle, native normal-pinnacle skill
+presets at maximum roll, and a synthetic mixed-boss pressure test. Maven Memory Game is excluded from built-in profiles.
+The mixed profile is an approximation, not calibrated Feared encounter data or a full boss rotation.
+Changing the search profile, searching and applying a tree never change your active Configuration.
+Built-in profiles preserve other player conditions and custom modifiers, replacing only incoming-hit settings
+and the managed synthetic background-DoT block. Saved Configurations use all their own conditions.
+Create/edit reusable profiles in the Configuration tab. Profile selection is remembered for this session.
 Balanced requires both DPS and configured survival score to improve over the starting tree, then ranks those results by their relative product.
 Configured survival replaces hit-only EHP in the optimizer, not elsewhere in PoB.
+The UI calls this score "Pressure resilience". It is not a boss-readiness certificate.
+The four-question readout shows maximum-hit and recovery snapshots, and explicitly flags missing tests:
+there is no boss-specific hit certification, two-hit recovery test, timed degen escape or guard/flask-off audit.
 It runs a 30-second benchmark using configured enemy damage, attack/cast time and mitigation.
 The score integrates expected time alive weighted by remaining usable Life/Mana/ES buffer;
 it is not EHP or literal seconds until death. Mean time alive is reported separately, capped at 30 seconds.
@@ -108,14 +121,19 @@ Close (or Escape) discards the search. No changes are made unless you use the re
 This is a local search, not an exhaustive/global optimizer; it can miss improvements requiring other swaps.
 Results must leave non-negative unreserved mana, positive unreserved life, and meet item/gem attribute
 requirements (including Omniscience). These checks cannot be disabled.
-Allowable-reduction sliders range from 0% to 100% for elemental/chaos resistance, attack AND spell
-block, spell suppression, elemental ailment avoidance, and casting headroom (mana).
+Build-aware defaults protect elemental/chaos resistances, casting resources and large-hit protection.
+Chaos resistance is unlocked for a 1-Life, chaos-immune build. Block is locked only at 50%+ attack/spell
+block or with recovery on block; suppression at 50%+; ailment avoidance if any elemental ailment is fully avoided.
+Unlocked defenses still contribute to the resilience score; only their separate "preserve this stat" floor is off.
+Advanced controls can enable or disable each optional floor and reset to build-aware defaults.
+Enabled allowable-reduction sliders start at 0% and range to 100% for elemental/chaos resistance, attack AND spell
+block, spell suppression, elemental ailment avoidance, and casting resources (mana).
 0% permits a fixed 0.5% reduction tolerance; 100% removes that optional requirement.
 Reductions are relative to each starting value, not percentage points or the last accepted tree.
 Negative resistance can fall by the selected percentage of its absolute starting value.
 Grouped stats are checked separately. These preserve effective values, not overcap, and do not force
-uncapped defences to reach their caps. Even the tolerance can allow losing full ailment avoidance.
-All allowable-reduction sliders default to 0%. Explicit choices are remembered while the tree tab is open.
+uncapped defences to reach their caps. At 0%, complete suppression and elemental ailment avoidance stay complete.
+Explicit safety choices are remembered after starting a search while the tree tab is open.
 Casting headroom checks separate burst-capacity and sustained-recovery ratios, not just pool size.
 Burst demand includes one use of each recurring skill plus one movement, one guard and the most
 expensive other on-demand skill. Repeated demand includes the selected skill at full calculated
@@ -133,7 +151,7 @@ exact action scheduler. Manual utility use frequency is unknown; repeated utilit
 timing, hit-based recovery/drains, random trigger clustering and Life/ES payment are not guaranteed.
 Energy Shield payment and unsupported mine-reservation timing are explicitly reported as unchecked
 models that require disabling the casting-headroom constraint to optimize.
-"Don't reduce maximum hit taken" keeps every damage type's maximum hit at least at its starting value.
+"Preserve large-hit protection" keeps every damage type's maximum hit at least at its starting value.
 If the starting tree fails a requirement, the search can still find a feasible branch swap; no invalid
 tree can be applied. Larger swaps may help, but this local search cannot guarantee a feasible result.
 Results depend on your skills, gear and enemy configuration. Review other defensive trade-offs.

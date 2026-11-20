@@ -1457,7 +1457,124 @@ Adds Hollow Palm Technique]])
 		assert(output.ReqDexItem.source == "Gem")
 	end)
 
-	it("keeps all popup text and controls inside its window", function()
+	it("picks build-aware optional safety without ignoring incidental defenses in the score", function()
+		local defaults = TreeOptimizer.DefaultConstraints({
+			Life = 3152, ChaosResist = 71, BlockChance = 24, SpellBlockChance = 0, SpellSuppressionChance = 100,
+		})
+		assert(defaults.block == 100 and defaults.ailmentAvoidance == 100)
+		assert(defaults.suppression == 0 and defaults.castingHeadroom == 0 and defaults.maxHit)
+		assert(TreeOptimizer.DefaultConstraints({ BlockChance = 50 }).block == 0)
+		assert(TreeOptimizer.DefaultConstraints({ BlockChance = 20, EnergyShieldOnBlock = 100 }).block == 0)
+		assert(TreeOptimizer.DefaultConstraints({ FreezeAvoidChance = 100 }).ailmentAvoidance == 0)
+		assert(TreeOptimizer.DefaultConstraints({ Life = 1, ChaosResist = 100 }).chaosRes == 100)
+	end)
+
+	it("keeps full suppression and ailment avoidance complete with default UI safety", function()
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { protectCaps = true })
+		optimizer:SetTargets(feasibleOutput())
+		assert(optimizer:ConstraintFailure(feasibleOutput({ SpellSuppressionChance = 99.9 })):match("suppression"))
+		assert(optimizer:ConstraintFailure(feasibleOutput({ FreezeAvoidChance = 99.9 })):match("avoidance"))
+		assert(not optimizer:ConstraintFailure(feasibleOutput()))
+		optimizer.constraints.suppression, optimizer.constraints.ailmentAvoidance = 1, 1
+		optimizer.targets = { }
+		optimizer:SetTargets(feasibleOutput())
+		assert(not optimizer:ConstraintFailure(feasibleOutput({ SpellSuppressionChance = 99, FreezeAvoidChance = 99 })))
+	end)
+
+	it("evaluates mixed and native boss profiles without changing live Configuration", function()
+		local profiles = require("Modules.OptimizerProfiles")
+		local config = build.configTab
+		local input, placeholder = copyTable(config.input), copyTable(config.placeholder)
+		local flags, active = build.buildFlag, config.activeConfigSetId
+		local list = profiles.List(build)
+		local calculate = profiles.CreateCalculator(build, list[2])
+		local output = calculate({ spec = build.spec, castingHeadroom = true, survivability = true })
+		assert(output.PhysicalEnemyDamage >= 3500 and output.ColdEnemyDamage >= 3500)
+		assert(output.ColdEnemyPen == 25 and output.TotalBuildDegen > 0)
+		assert(output.ConfiguredSurvivalScore > 0)
+		assert.same(input, config.input)
+		assert.same(placeholder, config.placeholder)
+		assert(build.buildFlag == flags and config.activeConfigSetId == active)
+
+		local alternate = config:NewConfigSet(nil, "Spell check")
+		alternate.input.enemyPhysicalDamage = 0
+		alternate.input.enemyColdDamage = 9000
+		alternate.input.enemyDamageType = "Spell"
+		table.insert(config.configSetOrderList, alternate.id)
+		local saved, shaper, beam
+		for _, profile in ipairs(profiles.List(build)) do
+			assert(profile.bossSkill ~= "Maven Memory Game")
+			if profile.configSetId == alternate.id then
+				saved = profile
+			elseif profile.bossSkill == "Shaper Ball" then
+				shaper = profile
+			elseif profile.bossSkill == "Shaper Beam" then
+				beam = profile
+			end
+		end
+		calculate = profiles.CreateCalculator(build, saved)
+		output = calculate({ spec = build.spec })
+		assert(output.ColdEnemyDamage >= 9000 and output.PhysicalEnemyDamage == 0)
+		config.configSets[active].customModsList = {
+			{ title = profiles.degenTitle, enabled = true, text = profiles.degenText },
+			{ title = "Real build degeneration", enabled = true, text = "10 Physical Damage taken per second" },
+		}
+		calculate = profiles.CreateCalculator(build, shaper)
+		output = calculate({ spec = build.spec })
+		assert(output.ColdEnemyPen == 25 and output.PhysicalEnemyDamage == 0)
+		assert(output.PhysicalBuildDegen > 0 and not output.FireBuildDegen)
+		calculate = profiles.CreateCalculator(build, beam)
+		output = calculate({ spec = build.spec, survivability = true })
+		assert(output.FireEnemyDegen > 0 and output.ColdEnemyDegen > 0 and output.LightningEnemyDegen > 0)
+		assert(output.ConfiguredSurvivalScore > 0)
+		assert(config.activeConfigSetId == active and #config.configSets[active].customModsList == 2)
+		assert.same(input, config.input)
+		assert.same(placeholder, config.placeholder)
+	end)
+
+	it("starts simple, exposes advanced overrides and resets build-aware safety", function()
+		build.treeTab:OpenOptimizerPopup()
+		local popup = main.popups[1]
+		assert(popup.controls.profile:IsShown() and popup.controls.question1:IsShown())
+		assert(not popup.controls.block:IsShown() and not popup.controls.metric:IsShown())
+		assert(not popup.controls.blockEnabled.state and popup.controls.block.val == 0)
+		assert(popup.controls.question3:GetProperty("label"):match("No timed escape"))
+		assert(popup.controls.question4:GetProperty("label"):match("No off%-state"))
+		popup.controls.advanced:Click()
+		assert(popup.controls.block:IsShown() and not popup.controls.question1:IsShown())
+		assert(not popup.controls.block:IsEnabled())
+		popup.controls.blockEnabled.state = true
+		assert(popup.controls.block:IsEnabled())
+		popup.controls.reset:Click()
+		assert(not popup.controls.blockEnabled.state and popup.controls.maxHit.state)
+		popup.controls.start:Click()
+		popup.controls.stop:Click()
+		popup.controls.goal:SelByValue("EHP", "value")
+		popup.controls.goal.selFunc()
+		assert(popup.controls.status:GetProperty("label"):match("Ready. More resilience"))
+		popup.controls.close:Click()
+	end)
+
+	it("changes search profiles without changing the build and remembers the selection", function()
+		build.treeTab:OpenOptimizerPopup()
+		local popup = main.popups[1]
+		local config, active = build.configTab, build.configTab.activeConfigSetId
+		popup.controls.profile:SelByValue("MIXED", "id")
+		popup.controls.profile.selFunc()
+		assert(popup.controls.profileInfo:GetProperty("label"):match("Synthetic"))
+		popup.controls.start:Click()
+		assert(build.treeTab.optimizerOptions.profile == "MIXED")
+		assert(not popup.controls.profile:IsEnabled())
+		popup.controls.stop:Click()
+		popup.controls.close:Click()
+		build.treeTab:OpenOptimizerPopup()
+		popup = main.popups[1]
+		assert(popup.controls.profile.list[popup.controls.profile.selIndex].id == "MIXED")
+		assert(config.activeConfigSetId == active)
+		popup.controls.close:Click()
+	end)
+
+	it("keeps basic and advanced popup text and controls inside its window", function()
 		local measure = DrawStringWidth
 		DrawStringWidth = function(height, _, text)
 			local longest = 0
@@ -1471,16 +1588,21 @@ Adds Hollow Palm Technique]])
 			local popup = main.popups[1]
 			local left, top = popup:GetPos()
 			local width, height = popup:GetSize()
-			for name, control in pairs(popup.controls) do
-				local x, y = control:GetPos()
-				local w, h = control:GetSize()
-				if control.labelRight then
-					w = w + control.labelWidth
-				elseif name == "info" or name == "status" or name == "warning" then
-					local _, lines = control:GetProperty("label"):gsub("\n", "")
-					h = h * (lines + 1)
+			for _, tab in ipairs({ "overview", "advanced" }) do
+				popup.controls[tab]:Click()
+				for name, control in pairs(popup.controls) do
+					if control:IsShown() then
+						local x, y = control:GetPos()
+						local w, h = control:GetSize()
+						if control.labelRight then
+							w = w + control.labelWidth
+						elseif control.label then
+							local _, lines = control:GetProperty("label"):gsub("\n", "")
+							h = h * (lines + 1)
+						end
+						assert(x >= left and y >= top and x + w <= left + width and y + h <= top + height, name.." exceeds popup bounds")
+					end
 				end
-				assert(x >= left and y >= top and x + w <= left + width and y + h <= top + height, name.." exceeds popup bounds")
 			end
 			popup.controls.suppression:SetVal(0)
 			popup.controls.start:Click()
@@ -1537,8 +1659,9 @@ Adds Hollow Palm Technique]])
 			assert(popup.controls[key].val == 0, key.." must default to 0% allowable reduction")
 		end
 		for key, reduction in pairs(reductions) do
+			popup.controls[key.."Enabled"].state = true
 			popup.controls[key]:SetVal(reduction / 100)
-			assert(popup.controls[key.."Value"]:GetProperty("label") == "^7"..reduction.."%")
+			assert(popup.controls[key.."Value"]:GetProperty("label") == "^7"..reduction.."% reduction")
 		end
 		popup.controls.maxHit.state = true
 		popup.controls.start:Click()
@@ -1553,7 +1676,8 @@ Adds Hollow Palm Technique]])
 		popup = main.popups[1]
 		for key, reduction in pairs(reductions) do
 			local control = popup.controls[key]
-			assert(math.abs(control.val * 100 - reduction) < 1e-8)
+			assert(popup.controls[key.."Enabled"].state == (reduction < 100))
+			assert(math.abs(control.val * 100 - (reduction < 100 and reduction or 0)) < 1e-8)
 		end
 		assert(popup.controls.maxHit.state)
 		popup.controls.close:Click()
@@ -1567,6 +1691,8 @@ Adds Hollow Palm Technique]])
 		build.treeTab:OpenOptimizerPopup()
 		local popup = main.popups[1]
 		popup.controls.goal.selIndex = 2
+		popup.controls.maxHit.state = false
+		popup.controls.castingHeadroomEnabled.state = true
 		popup.controls.castingHeadroom:SetVal(1)
 		popup.controls.start:Click()
 		local frames = 0
