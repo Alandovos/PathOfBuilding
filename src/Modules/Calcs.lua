@@ -178,6 +178,7 @@ function calcs.getMiscCalculator(build)
 	-- Run base calculation pass
 	local env, cachedPlayerDB, cachedEnemyDB, cachedMinionDB = calcs.initEnv(build, "CALCULATOR")
 	calcs.perform(env)
+	env.player.output.ExtraPoints = env.modDB:Sum("BASE", nil, "ExtraPoints")
 	local fullDPS = calcs.calcFullDPS(build, "CALCULATOR", {}, { cachedPlayerDB = cachedPlayerDB, cachedEnemyDB = cachedEnemyDB, cachedMinionDB = cachedMinionDB, env = nil})
 	local usedFullDPS = #fullDPS.skills > 0
 	if usedFullDPS then
@@ -190,6 +191,7 @@ function calcs.getMiscCalculator(build)
 		-- Trigger-source calculations shared by this override's main and Full DPS passes
 		env.triggerSourceCache = { }
 		calcs.perform(env)
+		env.player.output.ExtraPoints = env.modDB:Sum("BASE", nil, "ExtraPoints")
 		local mainUUID = cacheSkillUUID(env.player.mainSkill, env)
 		local mainEntry = GlobalCache.cachedData["CALCULATOR"][mainUUID]
 		if mainEntry and mainEntry.Env == env then

@@ -6,6 +6,7 @@ describe("Tree optimizer", function()
 			CombinedDPS = 100, TotalEHP = 100,
 			ManaUnreserved = 100, LifeUnreserved = 100,
 			ManaCastingCapacityRatio = 2, ManaCastingSustainRatio = 2,
+			ExtraPoints = 0,
 			Str = 100, Dex = 100, Int = 100, Omni = 100,
 			ReqStr = 100, ReqDex = 100, ReqInt = 100, ReqOmni = 100,
 			FireResist = 75, ColdResist = 75, LightningResist = 75, ChaosResist = 75,
@@ -55,6 +56,8 @@ describe("Tree optimizer", function()
 			assert(steps < 10000, "Optimizer did not terminate")
 		end
 		assert(optimizer.spec:CountAllocNodes() == optimizer.budget, "Point budget changed")
+		local _, ascendancyUsed = optimizer.spec:CountAllocNodes()
+		assert(ascendancyUsed == optimizer.ascendancyBudget, "Ascendancy point budget changed")
 		return optimizer
 	end
 
@@ -139,6 +142,55 @@ Added Small Passive Skills grant: 12% increased Fire Damage
 		end
 	end
 
+	local function selectWitchAscendancy()
+		for id, class in pairs(build.spec.tree.classes) do
+			if class.name == "Witch" then
+				build.spec:SelectClass(id)
+				build.spec:SelectAscendClass(1)
+				return
+			end
+		end
+		error("No Witch ascendancy fixture found")
+	end
+
+	local function ascendancyBranches(name, depth)
+		local choices = { }
+		for _, node in pairs(build.spec.nodes) do
+			local normal, ascendancy = build.spec:CountAllocNodes(node.path or {})
+			if not node.alloc and node.ascendancyName == name and node.path and normal == 0 and ascendancy == depth
+				and TreeOptimizer.CanChange(node, build.spec) then
+				table.insert(choices, node)
+			end
+		end
+		table.sort(choices, function(a, b) return a.id < b.id end)
+		for _, a in ipairs(choices) do
+			for _, b in ipairs(choices) do
+				if a.path[#a.path].id ~= b.path[#b.path].id then
+					return a, b
+				end
+			end
+		end
+	end
+
+	local function reliquarianRelic(name)
+		local selected
+		for id, class in pairs(build.spec.curClass.classes) do
+			if class.name == "Reliquarian" then
+				build.spec:SelectAscendClass(id)
+				selected = true
+				break
+			end
+		end
+		assert(selected, "Reliquarian ascendancy is missing")
+		for _, node in pairs(build.spec.nodes) do
+			if node.ascendancyName == build.spec.curAscendClassBaseName and node.dn == (name or "Foulborn Tremor Rod") then
+				build.spec:AllocNode(node)
+				return node
+			end
+		end
+		error("Reliquarian relic choice is missing")
+	end
+
 	it("balances relative DPS and EHP on a separate tree", function()
 		local source = build.spec
 		local optimizer = search("BALANCED", 150, 80)
@@ -210,7 +262,7 @@ Added Small Passive Skills grant: 12% increased Fire Damage
 		assert(optimizer.spec:CountAllocNodes() == 2)
 	end)
 
-	it("keeps locked mastery effects, ascendancies and occupied sockets fixed", function()
+	it("keeps locked mastery effects, locked ascendancy passives and occupied sockets fixed", function()
 		build.spec:SelectAscendClass(1)
 		for id in pairs(build.spec.tree.alternate_ascendancies or { }) do
 			if id ~= 0 then
@@ -244,6 +296,7 @@ Implicits: 0
 		build.itemsTab:AddItem(jewel, true)
 		build.spec.jewels[socket.id] = jewel.id
 		build.spec:AllocNode(ascendancy)
+		build.spec.optimizerLocks[ascendancy.id] = true
 		local optimizer = build.treeTab:CreateTreeOptimizer("BALANCED", 1, "CombinedDPS")
 		optimizer.calculate = function(override)
 			assert(override.spec.allocNodes[socket.id] and override.spec.jewels[socket.id] == jewel.id)
@@ -260,6 +313,171 @@ Implicits: 0
 				assert(not not optimizer.spec.allocNodes[id] == not not build.spec.allocNodes[id])
 			end
 		end
+	end)
+
+	it("exchanges connected ascendancy branches while respecting locks and blocks", function()
+		selectWitchAscendancy()
+		local from, target = ascendancyBranches(build.spec.curAscendClassBaseName, 2)
+		assert(from and target, "No two-point ascendancy branches found")
+		build.spec:AllocNode(from)
+		local normalBudget, ascendancyBudget = build.spec:CountAllocNodes()
+		local ascendClassId = build.spec.curAscendClassId
+		for _, restriction in ipairs({ "none", "lock", "block" }) do
+			build.spec.optimizerLocks[from.id] = restriction == "lock" or nil
+			build.spec.optimizerBlocks[target.id] = restriction == "block" or nil
+			local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 2, "CombinedDPS")
+			optimizer.calculate = function(override)
+				local used, ascendancyUsed = override.spec:CountAllocNodes()
+				assert(used == normalBudget and ascendancyUsed == ascendancyBudget)
+				assert(override.spec.curAscendClassId == ascendClassId)
+				return feasibleOutput({ CombinedDPS = override.spec.allocNodes[target.id] and 200 or 100 })
+			end
+			finish(optimizer)
+			if restriction == "none" then
+				assert(optimizer.spec.allocNodes[target.id] and not optimizer.spec.allocNodes[from.id])
+				assert(optimizer.bestMetrics.dps == 200)
+			else
+				assert(optimizer.spec.allocNodes[from.id] and not optimizer.spec.allocNodes[target.id])
+				assert(optimizer.improvements == 0)
+			end
+			assert(build.spec.allocNodes[from.id] and not build.spec.allocNodes[target.id], "Original ascendancy was changed")
+		end
+	end)
+
+	it("shares ascendancy points with an already selected secondary ascendancy without changing either selection", function()
+		selectWitchAscendancy()
+		local from = ascendancyBranches(build.spec.curAscendClassBaseName, 1)
+		assert(from)
+		build.spec:AllocNode(from)
+		local target
+		for id, ascendancy in pairs(build.spec.tree.alternate_ascendancies or {}) do
+			if id ~= 0 then
+				build.spec:SelectSecondaryAscendClass(id)
+				target = ascendancyBranches(ascendancy.id, 1)
+				if target then break end
+			end
+		end
+		assert(target, "No secondary ascendancy branches found")
+		local primary, secondary = build.spec.curAscendClassId, build.spec.curSecondaryAscendClassId
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		optimizer.calculate = function(override)
+			assert(override.spec.curAscendClassId == primary and override.spec.curSecondaryAscendClassId == secondary)
+			for _, node in pairs(override.spec.allocNodes) do
+				assert(not node.ascendancyName or node.ascendancyName == override.spec.curAscendClassBaseName
+					or node.ascendancyName == override.spec.curSecondaryAscendClass.id)
+			end
+			return feasibleOutput({ CombinedDPS = override.spec.allocNodes[target.id] and 200 or 100 })
+		end
+		finish(optimizer)
+		local _, total, secondaryUsed = optimizer.spec:CountAllocNodes()
+		assert(total == 1 and secondaryUsed == 1)
+		assert(optimizer.spec.allocNodes[target.id] and not optimizer.spec.allocNodes[from.id])
+		assert(build.spec.allocNodes[from.id] and not build.spec.allocNodes[target.id])
+	end)
+
+	it("cannot spend normal points as ascendancy points or change ascendancy identifiers", function()
+		build.spec:SelectAscendClass(1)
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		optimizer.calculate = function(override)
+			local _, ascendancyUsed = override.spec:CountAllocNodes()
+			assert(ascendancyUsed == 0, "A normal point was converted into an ascendancy point")
+			return feasibleOutput({ CombinedDPS = override.spec.allocNodes[alternative.id] and 200 or 100 })
+		end
+		finish(optimizer)
+		assert(optimizer.spec.allocNodes[alternative.id] and optimizer.ascendancyBudget == 0)
+		for _, node in pairs(optimizer.spec.nodes) do
+			if node.ascendancyName and node.ascendancyName ~= optimizer.spec.curAscendClassBaseName then
+				assert(not TreeOptimizer.CanChange(node, optimizer.spec, true), "A foreign ascendancy was unlocked")
+			end
+		end
+		assert(optimizer:IsValid())
+		optimizer.spec.curAscendClassId = optimizer.ascendClassId + 1
+		assert(not optimizer:IsValid())
+		optimizer.spec.curAscendClassId = optimizer.ascendClassId
+		optimizer.spec.curSecondaryAscendClassId = (optimizer.secondaryAscendClassId or 0) + 1
+		assert(not optimizer:IsValid())
+	end)
+
+	it("preserves passive-point grants only when needed for the allocated normal-point budget", function()
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		build.characterLevel = 1
+		optimizer.budget = 26
+		optimizer:SetTargets(feasibleOutput({ ExtraPoints = 5 }))
+		assert(not optimizer:ConstraintFailure(feasibleOutput({ ExtraPoints = 3 })))
+		assert(optimizer:ConstraintFailure(feasibleOutput({ ExtraPoints = 2 })):match("Passive%-point grants"))
+		optimizer.budget = 23
+		optimizer.targets = {}
+		optimizer:SetTargets(feasibleOutput({ ExtraPoints = 5 }))
+		assert(not optimizer:ConstraintFailure(feasibleOutput({ ExtraPoints = 0 })))
+	end)
+
+	it("optimizes zero-cost relic choices while respecting choice locks and blocks", function()
+		local from = reliquarianRelic()
+		local parent = from.linked[1]
+		local target
+		for _, option in ipairs(parent.linked) do
+			if option.isMultipleChoiceOption and option ~= from then
+				target = option
+				break
+			end
+		end
+		assert(target)
+		local primary = build.spec.curAscendClassId
+		for _, restriction in ipairs({ "none", "lock", "block" }) do
+			build.spec.optimizerLocks[from.id] = restriction == "lock" or nil
+			build.spec.optimizerBlocks[target.id] = restriction == "block" or nil
+			local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+			optimizer.calculate = function(override)
+				return feasibleOutput({ CombinedDPS = override.spec.allocNodes[target.id] and 200 or 100 })
+			end
+			finish(optimizer)
+			assert(optimizer.spec.curAscendClassId == primary and optimizer.spec.allocNodes[parent.id])
+			local choices = 0
+			for _, option in ipairs(parent.linked) do
+				if option.isMultipleChoiceOption and optimizer.spec.allocNodes[option.id] then
+					choices = choices + 1
+				end
+			end
+			assert(choices == 1, "Relic choices must remain mutually exclusive")
+			assert((optimizer.spec.allocNodes[target.id] ~= nil) == (restriction == "none"))
+			assert(build.spec.allocNodes[from.id] and not build.spec.allocNodes[target.id])
+		end
+	end)
+
+	it("refunds a Reliquarian display and its zero-cost child at the actual spent-point depth", function()
+		local from = reliquarianRelic("The Arkhon's Tools")
+		local parent = from.linked[1]
+		for _, node in pairs(build.spec.allocNodes) do
+			if node.ascendancyName == build.spec.curAscendClassBaseName and node.dn == "Passive Point" then
+				build.spec.optimizerLocks[node.id] = true
+			end
+		end
+		local probe = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		probe.spec:DeallocNode(probe.spec.nodes[parent.id])
+		local target
+		for _, node in pairs(probe.spec.nodes) do
+			if not node.alloc and node.path and node.ascendancyName == probe.spec.curAscendClassBaseName then
+				local normal, ascendancy = probe.spec:CountAllocNodes(node.path)
+				local allowed = normal == 0 and ascendancy == 1
+				for _, pathNode in ipairs(node.path) do
+					allowed = allowed and pathNode.id ~= parent.id and TreeOptimizer.CanChange(pathNode, probe.spec)
+				end
+				if allowed then
+					target = node
+					break
+				end
+			end
+		end
+		assert(target, "Fixture needs another reachable one-point ascendancy path")
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		optimizer.calculate = function(override)
+			return feasibleOutput({ CombinedDPS = override.spec.allocNodes[target.id] and 200 or 100 })
+		end
+		finish(optimizer)
+		assert(optimizer.spec.allocNodes[target.id], "The one-point exchange did not reach its target")
+		assert(not optimizer.spec.allocNodes[from.id] and not optimizer.spec.allocNodes[parent.id])
+		assert(optimizer.bestMetrics.dps == 200)
+		assert(build.spec.allocNodes[from.id] and build.spec.allocNodes[parent.id])
 	end)
 
 	it("adds an accessible mastery and tries each effect at the same point budget", function()

@@ -70,7 +70,14 @@ Balanced maximizes the product of relative DPS and EHP; it may sacrifice one to 
 Single-metric goals allow up to 0.5% loss in the other metric from its starting value.
 The search exchanges connected branches up to the selected swap size, using the same allocated point count.
 Mastery allocations and selected effects are optimized, without selecting duplicate effects.
-Ascendancies, runegrafts and occupied jewel sockets are never changed.
+Ascendancy passives can be reallocated within the selected primary and secondary ascendancies.
+Ascendancy selections, runegrafts and occupied jewel sockets are never changed.
+Normal and ascendancy points keep separate fixed budgets; neither can be spent as the other.
+The primary and secondary ascendancies share the existing total ascendancy-point budget.
+Ascendancy start nodes remain fixed. Zero-cost options (including Reliquarian relic choices)
+can change within the selected ascendancy; lock a specific option to preserve it.
+Swap size counts spent points, not zero-cost options on the branch.
+Passive-point grants cannot be lost if needed to cover the fixed normal-point budget.
 Empty jewel sockets can be allocated or refunded; socketed jewels are never changed.
 Passives on cluster jewels in allocated sockets can be reallocated.
 Required-node locks are saved with each tree and also protect nodes needed to keep them connected.

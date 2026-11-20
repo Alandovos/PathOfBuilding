@@ -10,9 +10,10 @@ function TreeOptimizer.CanChange(node, spec, ignoreLocks)
 	return node.type ~= "ClassStart" and node.type ~= "AscendClassStart"
 		and (node.type ~= "Mastery" or node.masteryEffects and #node.masteryEffects > 0)
 		and not (original and original.type == "Mastery" and spec.hashOverrides[node.id])
-		and not node.ascendancyName
+		and (not node.ascendancyName or node.ascendancyName == spec.curAscendClassBaseName
+			or spec.curSecondaryAscendClass and node.ascendancyName == spec.curSecondaryAscendClass.id)
 		and not ((node.type == "Socket" or node.isJewelSocket) and spec:GetSocketedJewel(node.id))
-		and not node.isMultipleChoiceOption
+		and (not node.isMultipleChoiceOption or node.ascendancyName)
 		and (ignoreLocks or not spec.optimizerLocks[node.id])
 end
 
@@ -41,6 +42,7 @@ function TreeOptimizer.new(spec, calculate, goal, depth, dpsStat, constraints)
 	for id in pairs(spec.optimizerLocks) do
 		assert(spec.allocNodes[id], "A required node is unallocated. Alt + right-click it to unlock it before optimizing.")
 	end
+	local budget, ascendancyBudget = spec:CountAllocNodes()
 	local self = setmetatable({
 		spec = spec,
 		calculate = calculate,
@@ -49,7 +51,11 @@ function TreeOptimizer.new(spec, calculate, goal, depth, dpsStat, constraints)
 		dpsStat = dpsStat,
 		constraints = copyTable(constraints or { }),
 		targets = { },
-		budget = spec:CountAllocNodes(),
+		budget = budget,
+		ascendancyBudget = ascendancyBudget,
+		classId = spec.curClassId,
+		ascendClassId = spec.curAscendClassId,
+		secondaryAscendClassId = spec.curSecondaryAscendClassId,
 		required = { },
 		requiredMasteries = { },
 		bestMasteries = copyTable(spec.masterySelections),
@@ -79,7 +85,10 @@ function TreeOptimizer:Restore(allocation, masteries)
 end
 
 function TreeOptimizer:IsValid()
-	if self.spec:CountAllocNodes() ~= self.budget then
+	local used, ascendancyUsed = self.spec:CountAllocNodes()
+	if used ~= self.budget or ascendancyUsed ~= self.ascendancyBudget
+		or self.spec.curClassId ~= self.classId or self.spec.curAscendClassId ~= self.ascendClassId
+		or self.spec.curSecondaryAscendClassId ~= self.secondaryAscendClassId then
 		return false
 	end
 	for id in pairs(self.required) do
@@ -159,6 +168,9 @@ function TreeOptimizer.GetConstraintMode(value)
 end
 
 function TreeOptimizer:SetTargets(output)
+	assert(validMetric(output.ExtraPoints), "Cannot determine passive-point grants")
+	-- Match EstimatePlayerProgress's maximum quest-point allowance, without worsening an over-budget starting tree.
+	self.minimumExtraPoints = math.min(output.ExtraPoints, math.max(0, self.budget - (self.spec.build.characterLevel - 1 + 23)))
 	local function add(mode, stat, label, capStat, missingStat, cap)
 		if mode == "NONE" or mode == 100 then
 			return
@@ -238,6 +250,9 @@ function TreeOptimizer:ConstraintFailure(output)
 	end
 	if self.checkCastingHeadroom and output.ManaCastingUnsupported then
 		return "Casting headroom: "..output.ManaCastingUnsupported.."\nSet to 100% to leave casting headroom unchecked."
+	end
+	if self.minimumExtraPoints and (not validMetric(output.ExtraPoints) or output.ExtraPoints < self.minimumExtraPoints) then
+		return "Passive-point grants no longer cover the fixed normal-point budget."
 	end
 	for _, attr in ipairs({ "Str", "Dex", "Int", "Omni" }) do
 		local required = output["Req"..attr]
@@ -338,9 +353,29 @@ function TreeOptimizer:Run()
 			end
 		end
 		self:Restore(current, currentMasteries)
+		local choices = { }
+		for id, node in pairs(self.spec.nodes) do
+			if node.isMultipleChoiceOption and not node.alloc and node.path and TreeOptimizer.CanChange(node, self.spec)
+				and not self.spec.optimizerBlocks[id] then
+				local used, ascendancyUsed = self.spec:CountAllocNodes(node.path)
+				if used == 0 and ascendancyUsed == 0 then
+					table.insert(choices, id)
+				end
+			end
+		end
+		table.sort(choices)
+		for _, id in ipairs(choices) do
+			self:Restore(current, currentMasteries)
+			self.spec:AllocNode(self.spec.nodes[id])
+			self:Evaluate(seen)
+			coroutine.yield()
+		end
+		self:Restore(current, currentMasteries)
 		local removals = { }
 		for id, node in pairs(current) do
-			if TreeOptimizer.CanChange(node, self.spec) and #node.depends <= self.depth then
+			local used, ascendancyUsed = self.spec:CountAllocNodes(node.depends)
+			local cost = used + ascendancyUsed
+			if TreeOptimizer.CanChange(node, self.spec) and cost > 0 and cost <= self.depth then
 				local allowed = true
 				for _, dependent in ipairs(node.depends) do
 					if not TreeOptimizer.CanChange(dependent, self.spec) then
@@ -361,13 +396,17 @@ function TreeOptimizer:Run()
 			self.spec:DeallocNode(self.spec.nodes[id])
 			local reduced = copyTable(self.spec.allocNodes, true)
 			local reducedMasteries = copyTable(self.spec.masterySelections)
-			local cost = self.budget - self.spec:CountAllocNodes()
+			local used, ascendancyUsed = self.spec:CountAllocNodes()
+			local normalCost = self.budget - used
+			local ascendancyCost = self.ascendancyBudget - ascendancyUsed
+			local cost = normalCost + ascendancyCost
 			local additions = { }
 			if cost > 0 and cost <= self.depth then
 				for targetId, node in pairs(self.spec.nodes) do
 					if not node.alloc and node.path and TreeOptimizer.CanChange(node, self.spec) then
 						local path = #node.intuitiveLeapLikesAffecting > 0 and { node } or node.path
-						local allowed = #path == cost
+						local normalPoints, ascendancyPoints = self.spec:CountAllocNodes(path)
+						local allowed = normalPoints == normalCost and ascendancyPoints == ascendancyCost
 						for _, pathNode in ipairs(path) do
 							if not TreeOptimizer.CanChange(pathNode, self.spec) or self.spec.optimizerBlocks[pathNode.id] then
 								allowed = false

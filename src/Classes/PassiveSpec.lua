@@ -890,10 +890,10 @@ function PassiveSpecClass:DeallocNode(node)
 	end
 end
 
--- Count the number of allocated nodes and allocated ascendancy nodes
-function PassiveSpecClass:CountAllocNodes()
+-- Count allocated points, or the point cost of a supplied branch/path.
+function PassiveSpecClass:CountAllocNodes(nodes)
 	local used, ascUsed, secondaryAscUsed, sockets = 0, 0, 0, 0
-	for _, node in pairs(self.allocNodes) do
+	for _, node in pairs(nodes or self.allocNodes) do
 		if node.type ~= "ClassStart" and node.type ~= "AscendClassStart" then
 			if node.ascendancyName then
 				if not node.isMultipleChoiceOption then
