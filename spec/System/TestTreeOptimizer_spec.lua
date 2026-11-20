@@ -112,6 +112,32 @@ Added Small Passive Skills grant: 12% increased Fire Damage
 		error("No spare attribute passive found")
 	end
 
+	local function accessMastery(name)
+		local mastery, notable
+		for _, node in pairs(build.spec.nodes) do
+			if node.type == "Mastery" and not node.alloc and node.masteryEffects and #node.masteryEffects > 1
+				and not node.ascendancyName and (not name or node.name == name) then
+				for _, linked in ipairs(node.linked) do
+					if linked.type == "Notable" and linked.path and (not notable or #linked.path < #notable.path) then
+						mastery, notable = node, linked
+					end
+				end
+			end
+		end
+		assert(mastery and notable, "No accessible mastery fixture found")
+		build.spec:AllocNode(notable)
+		assert(#mastery.path == 1)
+		return mastery
+	end
+
+	local function lockAllocated()
+		for id, node in pairs(build.spec.allocNodes) do
+			if TreeOptimizer.CanChange(node, build.spec) then
+				build.spec.optimizerLocks[id] = true
+			end
+		end
+	end
+
 	it("balances relative DPS and EHP on a separate tree", function()
 		local source = build.spec
 		local optimizer = search("BALANCED", 150, 80)
@@ -183,7 +209,7 @@ Added Small Passive Skills grant: 12% increased Fire Damage
 		assert(optimizer.spec:CountAllocNodes() == 2)
 	end)
 
-	it("keeps mastery effects, ascendancies and sockets fixed", function()
+	it("keeps locked mastery effects, ascendancies and sockets fixed", function()
 		build.spec:SelectAscendClass(1)
 		for id in pairs(build.spec.tree.alternate_ascendancies or { }) do
 			if id ~= 0 then
@@ -207,6 +233,7 @@ Added Small Passive Skills grant: 12% increased Fire Damage
 		local effect = mastery.masteryEffects[1].effect
 		build.spec.masterySelections[mastery.id] = effect
 		build.spec:AllocNode(mastery)
+		build.spec.optimizerLocks[mastery.id] = true
 		build.spec:AllocNode(socket)
 		build.spec:AllocNode(ascendancy)
 		local optimizer = build.treeTab:CreateTreeOptimizer("BALANCED", 1, "CombinedDPS")
@@ -223,6 +250,159 @@ Added Small Passive Skills grant: 12% increased Fire Damage
 				assert(not not optimizer.spec.allocNodes[id] == not not build.spec.allocNodes[id])
 			end
 		end
+	end)
+
+	it("adds an accessible mastery and tries each effect at the same point budget", function()
+		local mastery = accessMastery()
+		local effect = mastery.masteryEffects[2].effect
+		lockAllocated()
+		local spare
+		for _, node in pairs(build.spec.nodes) do
+			if node.type == "Normal" and not node.alloc and node.path and #node.path == 1
+				and TreeOptimizer.CanChange(node, build.spec) then
+				spare = node
+				break
+			end
+		end
+		assert(spare)
+		build.spec:AllocNode(spare)
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		optimizer.calculate = function(override)
+			return feasibleOutput({ CombinedDPS = override.spec.masterySelections[mastery.id] == effect and 200 or 100 })
+		end
+		finish(optimizer)
+		assert(optimizer.spec.allocNodes[mastery.id] and optimizer.spec.masterySelections[mastery.id] == effect)
+		assert(not optimizer.spec.allocNodes[spare.id])
+		assert(not build.spec.allocNodes[mastery.id] and not build.spec.masterySelections[mastery.id])
+	end)
+
+	it("refunds a mastery and clears its effect when another passive is better", function()
+		local mastery = accessMastery()
+		lockAllocated()
+		build.spec.masterySelections[mastery.id] = mastery.masteryEffects[1].effect
+		build.spec:AllocNode(mastery)
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		optimizer.calculate = function(override)
+			return feasibleOutput({ CombinedDPS = not override.spec.allocNodes[mastery.id] and 200 or 100 })
+		end
+		finish(optimizer)
+		assert(not optimizer.spec.allocNodes[mastery.id] and not optimizer.spec.masterySelections[mastery.id])
+		assert(build.spec.allocNodes[mastery.id] and build.spec.masterySelections[mastery.id])
+	end)
+
+	it("changes a mastery effect, applies its real stats and preserves it through save/load", function()
+		local mastery = accessMastery("Life Mastery")
+		local targetEffect, originalEffect
+		for _, option in ipairs(mastery.masteryEffects) do
+			local effect = build.spec.tree.masteryEffects[option.effect]
+			for _, line in ipairs(effect.sd) do
+				if line:match("^%+%d+ to maximum Life$") then
+					targetEffect = option.effect
+				end
+			end
+		end
+		assert(targetEffect)
+		for _, option in ipairs(mastery.masteryEffects) do
+			if option.effect ~= targetEffect then
+				originalEffect = option.effect
+				break
+			end
+		end
+		lockAllocated()
+		build.spec.masterySelections[mastery.id] = originalEffect
+		build.spec:AllocNode(mastery)
+		build.buildFlag = true
+		runCallback("OnFrame")
+		local calculate, baseline = build.calcsTab:GetMiscCalculator()
+		local optimizer = build.treeTab:CreateTreeOptimizer("EHP", 1, "CombinedDPS")
+		optimizer.calculate = function(override)
+			return feasibleOutput({ TotalEHP = override.spec.masterySelections[mastery.id] == targetEffect and 200 or 100 })
+		end
+		finish(optimizer)
+		assert(optimizer.spec.masterySelections[mastery.id] == targetEffect)
+		assert(build.spec.masterySelections[mastery.id] == originalEffect)
+		local output = calculate({ spec = optimizer.spec })
+		assert(output.Life > baseline.Life, "Selected life mastery must affect actual calculations")
+		local xml = { }
+		optimizer.spec:Save(xml)
+		local loaded = new("PassiveSpec"):PassiveSpec(build, build.spec.treeVersion)
+		loaded:Load(xml, "mastery optimizer test")
+		loaded:PostLoad()
+		assert(loaded.allocNodes[mastery.id] and loaded.masterySelections[mastery.id] == targetEffect)
+		assert(loaded:CountAllocNodes() == optimizer.budget)
+		assert(math.abs(calculate({ spec = loaded }).Life - output.Life) < 1e-8)
+	end)
+
+	it("does not duplicate a mastery effect already selected at another locked mastery", function()
+		local firstMastery = accessMastery("Life Mastery")
+		local firstEffect = firstMastery.masteryEffects[1].effect
+		build.spec.masterySelections[firstMastery.id] = firstEffect
+		build.spec:AllocNode(firstMastery)
+		local secondMastery = accessMastery("Life Mastery")
+		local originalEffect = secondMastery.masteryEffects[2].effect
+		local targetEffect = secondMastery.masteryEffects[3].effect
+		lockAllocated()
+		build.spec.masterySelections[secondMastery.id] = originalEffect
+		build.spec:AllocNode(secondMastery)
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		optimizer.calculate = function(override)
+			local selected = override.spec.masterySelections[secondMastery.id]
+			assert(selected ~= firstEffect, "Duplicate mastery effect reached the calculator")
+			return feasibleOutput({ CombinedDPS = selected == targetEffect and 200 or 100 })
+		end
+		finish(optimizer)
+		assert(optimizer.spec.masterySelections[firstMastery.id] == firstEffect)
+		assert(optimizer.spec.masterySelections[secondMastery.id] == targetEffect)
+	end)
+
+	it("excludes blocked nodes and paths through them", function()
+		local target, extension
+		for _, node in ipairs(alternative.linked) do
+			if node.type == "Normal" and node.path and #node.path == 2 then
+				target = node
+				break
+			end
+		end
+		for _, node in ipairs(first.linked) do
+			if node.type == "Normal" and not node.alloc and node.path and #node.path == 1 then
+				extension = node
+				break
+			end
+		end
+		assert(target and extension)
+		build.spec:AllocNode(extension)
+		build.spec.optimizerBlocks[alternative.id] = true
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 3, "CombinedDPS")
+		optimizer.calculate = function(override)
+			assert(not override.spec.allocNodes[alternative.id])
+			return feasibleOutput({ CombinedDPS = override.spec.allocNodes[target.id] and 200 or 100 })
+		end
+		finish(optimizer)
+		assert(not optimizer.spec.allocNodes[alternative.id] and not optimizer.spec.allocNodes[target.id])
+	end)
+
+	it("refunds blocked allocated nodes before accepting a result, even at lower DPS", function()
+		build.spec.optimizerBlocks[first.id] = true
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		optimizer.calculate = function(override)
+			return feasibleOutput({ CombinedDPS = override.spec.allocNodes[first.id] and 100 or 90 })
+		end
+		finish(optimizer)
+		assert(optimizer.initialFailure:match("Blocked passive"))
+		assert(optimizer.bestFeasible and not optimizer.spec.allocNodes[first.id])
+		assert(optimizer.bestMetrics.dps == 90)
+		assert(build.spec.allocNodes[first.id], "Blocking must not modify the source tree")
+	end)
+
+	it("does not offer an infeasible result when all replacements for a blocked node are forbidden", function()
+		for id, node in pairs(build.spec.nodes) do
+			if TreeOptimizer.CanChange(node, build.spec, true) then
+				build.spec.optimizerBlocks[id] = true
+			end
+		end
+		local optimizer = search("DPS", 200, 100)
+		assert(not optimizer.bestFeasible and optimizer.improvements == 0)
+		assert(optimizer.initialFailure:match("Blocked passive"))
 	end)
 
 	it("moves a main-tree point into an equipped fire cluster and preserves it through save/load", function()
@@ -397,6 +577,10 @@ Adds Hollow Palm Technique]])
 	end)
 
 	it("discards tentative allocations when stopped", function()
+		local mastery = accessMastery()
+		local effect = mastery.masteryEffects[1].effect
+		build.spec.masterySelections[mastery.id] = effect
+		build.spec:AllocNode(mastery)
 		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
 		optimizer.calculate = function()
 			return feasibleOutput()
@@ -405,7 +589,8 @@ Adds Hollow Palm Technique]])
 		assert(not optimizer.done)
 		optimizer:Stop()
 		assert(optimizer.done and optimizer.spec.allocNodes[first.id])
-		assert(optimizer.spec:CountAllocNodes() == 1)
+		assert(optimizer.spec:CountAllocNodes() == optimizer.budget)
+		assert(optimizer.spec.masterySelections[mastery.id] == effect)
 	end)
 
 	it("rejects an invalid baseline and reports non-finite candidates", function()
@@ -419,33 +604,45 @@ Adds Hollow Palm Technique]])
 		assert(optimizer.rejected > 0 and optimizer.improvements == 0)
 	end)
 
-	it("persists locks through save/load, copying and undo states", function()
+	it("persists locks and blocks through save/load, copying and undo states", function()
 		build.spec.optimizerLocks[first.id] = true
+		build.spec.optimizerBlocks[alternative.id] = true
 		local state = build.spec:CreateUndoState()
 		build.spec.optimizerLocks[first.id] = nil
+		build.spec.optimizerBlocks[alternative.id] = nil
 		build.spec:RestoreUndoState(state)
 		assert(build.spec.optimizerLocks[first.id])
+		assert(build.spec.optimizerBlocks[alternative.id])
 		local xml = { }
 		build.spec:Save(xml)
 		local loaded = new("PassiveSpec"):PassiveSpec(build, build.spec.treeVersion)
 		loaded:Load(xml, "optimizer test")
 		loaded:PostLoad()
 		assert(loaded.optimizerLocks[first.id] and loaded.allocNodes[first.id])
+		assert(loaded.optimizerBlocks[alternative.id])
 		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
 		assert(optimizer.spec.optimizerLocks[first.id])
 		assert(optimizer.spec.optimizerLocks ~= build.spec.optimizerLocks)
+		assert(optimizer.spec.optimizerBlocks[alternative.id])
+		assert(optimizer.spec.optimizerBlocks ~= build.spec.optimizerBlocks)
 	end)
 
-	it("toggles required nodes with Alt-right-click without replacing ordinary right-click", function()
+	it("toggles required and blocked nodes with distinct gestures without replacing ordinary right-click", function()
 		build.buildFlag = true
 		runCallback("OnFrame")
 		local viewer = build.treeTab.viewer
 		local viewport = { x = 0, y = 0, width = 1000, height = 800 }
 		viewer:Focus(first.x, first.y, viewport, build)
 		local cursor, keyDown = GetCursorPos, IsKeyDown
+		local zoom, zoomCalls = viewer.Zoom, 0
+		viewer.Zoom = function(self, ...)
+			zoomCalls = zoomCalls + 1
+			return zoom(self, ...)
+		end
 		local alt = true
+		local ctrl = false
 		GetCursorPos = function() return 500, 400 end
-		IsKeyDown = function(key) return key == "ALT" and alt end
+		IsKeyDown = function(key) return key == "ALT" and alt or key == "CTRL" and ctrl end
 		local ok, err = xpcall(function()
 			local function rightClick()
 				viewer:Draw(build, viewport, { { type = "KeyUp", key = "RIGHTBUTTON" } })
@@ -458,8 +655,27 @@ Adds Hollow Palm Technique]])
 			alt = true
 			rightClick()
 			assert(not build.spec.optimizerLocks[first.id])
+			ctrl = true
+			rightClick()
+			assert(build.spec.optimizerBlocks[first.id] and not build.spec.optimizerLocks[first.id])
+			ctrl = false
+			rightClick()
+			assert(build.spec.optimizerLocks[first.id] and not build.spec.optimizerBlocks[first.id])
+			ctrl = true
+			rightClick()
+			assert(build.spec.optimizerBlocks[first.id] and not build.spec.optimizerLocks[first.id])
+			rightClick()
+			assert(not build.spec.optimizerBlocks[first.id])
+			viewer:Focus(alternative.x, alternative.y, viewport, build)
+			rightClick()
+			assert(build.spec.optimizerBlocks[alternative.id] and not alternative.alloc)
+			assert(zoomCalls == 0, "The blocking gesture must not zoom")
+			alt = false
+			rightClick()
+			assert(zoomCalls == 1, "Ordinary Ctrl-right-click must still zoom")
 		end, debug.traceback)
 		GetCursorPos, IsKeyDown = cursor, keyDown
+		viewer.Zoom = zoom
 		assert(ok, err)
 	end)
 

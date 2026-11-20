@@ -19,6 +19,7 @@ local JEWEL_RADIUS_TINT_PRIMARY_ONLY = { 1, 0, 0, 0.7 }
 local JEWEL_RADIUS_TINT_COMPARE_ONLY = { 0, 1, 0, 0.7 }
 
 local gemTooltip = require("Classes.GemTooltip")
+local TreeOptimizer = require("Classes.TreeOptimizer")
 
 local function isAbyssConquered(node)
 	local conqueror = node and node.conqueredBy and node.conqueredBy.conqueror
@@ -269,7 +270,7 @@ function PassiveTreeViewClass:Draw(build, viewPort, inputEvents)
 	end
 
 	-- Ctrl-click to zoom
-	if treeClick and IsKeyDown("CTRL") then
+	if treeClick and IsKeyDown("CTRL") and not (treeClick == "RIGHT" and IsKeyDown("ALT")) then
 		self:Zoom(treeClick == "RIGHT" and -2 or 2, viewPort)
 		treeClick = nil
 	end
@@ -521,8 +522,16 @@ function PassiveTreeViewClass:Draw(build, viewPort, inputEvents)
 			end
 		end
 	elseif treeClick == "RIGHT" then
-		if hoverNode and IsKeyDown("ALT") and (hoverNode.alloc or spec.optimizerLocks[hoverNode.id]) then
+		if hoverNode and IsKeyDown("ALT") and IsKeyDown("CTRL") then
+			if spec.optimizerBlocks[hoverNode.id] or TreeOptimizer.CanChange(hoverNode, spec, true) then
+				spec.optimizerBlocks[hoverNode.id] = not spec.optimizerBlocks[hoverNode.id] or nil
+				spec.optimizerLocks[hoverNode.id] = nil
+				spec:AddUndoState()
+				build.buildFlag = true
+			end
+		elseif hoverNode and IsKeyDown("ALT") and (hoverNode.alloc or spec.optimizerLocks[hoverNode.id]) then
 			spec.optimizerLocks[hoverNode.id] = not spec.optimizerLocks[hoverNode.id] or nil
+			spec.optimizerBlocks[hoverNode.id] = nil
 			spec:AddUndoState()
 			build.buildFlag = true
 		elseif hoverNode and hoverNode.alloc and hoverNode.type == "Socket" then
@@ -1062,11 +1071,16 @@ function PassiveTreeViewClass:Draw(build, viewPort, inputEvents)
 			SetDrawColor(1, 0.8, 0.2)
 			DrawString(scrX + 12, scrY - 18, "LEFT", 12, "VAR", "L")
 		end
+		if spec.optimizerBlocks[nodeId] then
+			SetDrawLayer(nil, 30)
+			SetDrawColor(1, 0.2, 0.2)
+			DrawString(scrX + 12, scrY - 18, "LEFT", 12, "VAR", "X")
+		end
 		if node == hoverNode and (node.type ~= "Socket" or not IsKeyDown("SHIFT")) and (node.type ~= "Mastery" or node.masteryEffects) and not IsKeyDown("CTRL") and not main.popups[1] then
 			-- Draw tooltip
 			SetDrawLayer(nil, 100)
 			local size = m_floor(node.size * scale)
-			if self.tooltip:CheckForUpdate(node, self.showStatDifferences, self.tracePath, launch.devModeAlt, build.outputRevision, build.spec.allocMode, spec.optimizerLocks[node.id]) then
+			if self.tooltip:CheckForUpdate(node, self.showStatDifferences, self.tracePath, launch.devModeAlt, build.outputRevision, build.spec.allocMode, spec.optimizerLocks[node.id], spec.optimizerBlocks[node.id]) then
 				self:AddNodeTooltip(self.tooltip, node, build)
 			end
 			self.tooltip.center = true
@@ -1452,10 +1466,15 @@ function PassiveTreeViewClass:AddNodeName(tooltip, node, build)
 	end
 	tooltip.center = true
 	tooltip:AddLine(24, nodeName..(launch.devModeAlt and " ["..node.id.."]" or ""), "FONTIN")
-	if build.spec.optimizerLocks[node.id] then
+	if build.spec.optimizerBlocks[node.id] then
+		tooltip:AddLine(14, "^xFF3333Blocked from tree optimizer (Ctrl + Alt + right-click to unblock)")
+	elseif build.spec.optimizerLocks[node.id] then
 		tooltip:AddLine(14, "^xFFCC33Required by tree optimizer (Alt + right-click to unlock)")
 	elseif node.alloc then
 		tooltip:AddLine(14, "^7Alt + right-click to require this node when optimizing")
+	end
+	if TreeOptimizer.CanChange(node, build.spec, true) and not build.spec.optimizerBlocks[node.id] then
+		tooltip:AddLine(14, "^7Ctrl + Alt + right-click to block this node when optimizing")
 	end
 	tooltip.center = false
 	if launch.devModeAlt and node.id > 65535 then

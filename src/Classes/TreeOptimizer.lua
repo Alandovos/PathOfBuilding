@@ -5,21 +5,27 @@ local TreeOptimizer = { }
 TreeOptimizer.__index = TreeOptimizer
 local minimumMetricRatio = 0.995
 
-function TreeOptimizer.CanChange(node, spec)
+function TreeOptimizer.CanChange(node, spec, ignoreLocks)
 	local original = spec.tree.nodes[node.id]
 	return node.type ~= "ClassStart" and node.type ~= "AscendClassStart"
-		and node.type ~= "Mastery" and not (original and original.type == "Mastery")
+		and (node.type ~= "Mastery" or node.masteryEffects and #node.masteryEffects > 0)
+		and not (original and original.type == "Mastery" and spec.hashOverrides[node.id])
 		and not node.ascendancyName and node.type ~= "Socket" and not node.isJewelSocket
 		and not node.isMultipleChoiceOption
-		and not spec.optimizerLocks[node.id]
+		and (ignoreLocks or not spec.optimizerLocks[node.id])
 end
 
-local function allocationKey(allocation)
+local function allocationKey(allocation, masteries)
 	local ids = { }
 	for id in pairs(allocation) do
 		table.insert(ids, id)
 	end
 	table.sort(ids)
+	for index, id in ipairs(ids) do
+		if masteries[id] then
+			ids[index] = id..":"..masteries[id]
+		end
+	end
 	return table.concat(ids, ",")
 end
 
@@ -44,7 +50,8 @@ function TreeOptimizer.new(spec, calculate, goal, depth, dpsStat, constraints)
 		targets = { },
 		budget = spec:CountAllocNodes(),
 		required = { },
-		masteries = copyTable(spec.masterySelections),
+		requiredMasteries = { },
+		bestMasteries = copyTable(spec.masterySelections),
 		best = copyTable(spec.allocNodes, true),
 		tested = 0,
 		rejected = 0,
@@ -54,18 +61,19 @@ function TreeOptimizer.new(spec, calculate, goal, depth, dpsStat, constraints)
 	for id, node in pairs(spec.allocNodes) do
 		if not TreeOptimizer.CanChange(node, spec) then
 			self.required[id] = true
+			self.requiredMasteries[id] = spec.masterySelections[id]
 		end
 	end
 	self.worker = coroutine.create(function() self:Run() end)
 	return self
 end
 
-function TreeOptimizer:Restore(allocation)
+function TreeOptimizer:Restore(allocation, masteries)
 	for _, node in pairs(self.spec.nodes) do
 		node.alloc = allocation[node.id] ~= nil
 	end
 	self.spec.allocNodes = copyTable(allocation, true)
-	self.spec.masterySelections = copyTable(self.masteries)
+	self.spec.masterySelections = copyTable(masteries)
 	self.spec:BuildAllDependsAndPaths()
 end
 
@@ -78,12 +86,46 @@ function TreeOptimizer:IsValid()
 			return false
 		end
 	end
-	for id, effect in pairs(self.masteries) do
+	for id in pairs(self.spec.optimizerBlocks) do
+		if self.spec.allocNodes[id] then
+			return false
+		end
+	end
+	for id, effect in pairs(self.requiredMasteries) do
 		if self.spec.masterySelections[id] ~= effect then
 			return false
 		end
 	end
+	local effects = { }
+	for id, node in pairs(self.spec.allocNodes) do
+		if node.type == "Mastery" and node.masteryEffects and #node.masteryEffects > 0 and not self.spec.hashOverrides[id] then
+			local effect = self.spec.masterySelections[id]
+			local allowed, accessible = false, false
+			for _, option in ipairs(node.masteryEffects) do
+				allowed = allowed or option.effect == effect
+			end
+			for _, linked in ipairs(node.linked) do
+				accessible = accessible or linked.alloc and linked.type == "Notable"
+			end
+			if not effect or not self.spec.tree.masteryEffects[effect] or not allowed or not accessible or effects[effect] then
+				return false
+			end
+			effects[effect] = true
+		end
+	end
 	return true
+end
+
+function TreeOptimizer:MasteryEffects(node)
+	local effects = { }
+	for _, option in ipairs(node.masteryEffects) do
+		local assigned = isValueInTable(self.spec.masterySelections, option.effect)
+		if self.spec.tree.masteryEffects[option.effect] and (not assigned or assigned == node.id) then
+			table.insert(effects, option.effect)
+		end
+	end
+	table.sort(effects)
+	return effects
 end
 
 function TreeOptimizer:Metrics()
@@ -153,6 +195,11 @@ function TreeOptimizer:SetTargets(output)
 end
 
 function TreeOptimizer:ConstraintFailure(output)
+	for id in pairs(self.spec.optimizerBlocks) do
+		if self.spec.allocNodes[id] then
+			return "Blocked passive is allocated: "..self.spec.nodes[id].dn.."."
+		end
+	end
 	if not validMetric(output.ManaUnreserved) then
 		return "Mana reservation exceeds available mana (or mana is not finite)."
 	end
@@ -193,19 +240,65 @@ function TreeOptimizer:Score(metrics)
 	return math.log(metrics.dps / self.base.dps) + math.log(metrics.ehp / self.base.ehp)
 end
 
+function TreeOptimizer:Evaluate(seen)
+	local key = allocationKey(self.spec.allocNodes, self.spec.masterySelections)
+	if seen[key] or not self:IsValid() then
+		return
+	end
+	seen[key] = true
+	local metrics, output = self:Metrics()
+	self.tested = self.tested + 1
+	local failure = not metrics and "DPS or EHP is not finite." or self:ConstraintFailure(output)
+	if metrics and not failure then
+		local score = self:Score(metrics)
+		if score > self.bestScore + 1e-9 then
+			self.best = copyTable(self.spec.allocNodes, true)
+			self.bestMasteries = copyTable(self.spec.masterySelections)
+			self.bestMetrics = metrics
+			self.bestScore = score
+			self.bestFeasible = true
+			self.improvements = self.improvements + 1
+		end
+	else
+		self.rejected = self.rejected + 1
+		self.lastRejection = failure
+	end
+end
+
 function TreeOptimizer:Run()
 	local metrics, output = self:Metrics()
 	self.base = assert(metrics, "Optimizer requires finite DPS and EHP. Check the build configuration.")
 	assert(self.base.dps > 0 and self.base.ehp > 0, "Optimizer requires positive DPS and EHP. Select a damaging skill and check the enemy configuration.")
 	self:SetTargets(output)
-	self.initialFailure = self:ConstraintFailure(output)
+	self.initialFailure = self:ConstraintFailure(output) or (not self:IsValid() and "Passive allocation or mastery selection is invalid.")
 	self.bestFeasible = not self.initialFailure
 	self.bestMetrics = self.base
 	self.bestScore = self.bestFeasible and self:Score(self.base) or -math.huge
-	local seen = { [allocationKey(self.best)] = true }
+	local seen = { [allocationKey(self.best, self.bestMasteries)] = true }
 	while true do
 		self.pass = self.pass + 1
 		local current = self.best
+		local currentMasteries = self.bestMasteries
+		local masteryIds = { }
+		for id in pairs(currentMasteries) do
+			if TreeOptimizer.CanChange(self.spec.nodes[id], self.spec) then
+				table.insert(masteryIds, id)
+			end
+		end
+		table.sort(masteryIds)
+		for _, id in ipairs(masteryIds) do
+			self:Restore(current, currentMasteries)
+			for _, effect in ipairs(self:MasteryEffects(self.spec.nodes[id])) do
+				if effect ~= currentMasteries[id] then
+					self:Restore(current, currentMasteries)
+					self.spec.masterySelections[id] = effect
+					self.spec:BuildAllDependsAndPaths()
+					self:Evaluate(seen)
+					coroutine.yield()
+				end
+			end
+		end
+		self:Restore(current, currentMasteries)
 		local removals = { }
 		for id, node in pairs(current) do
 			if TreeOptimizer.CanChange(node, self.spec) and #node.depends <= self.depth then
@@ -225,9 +318,10 @@ function TreeOptimizer:Run()
 		for index, id in ipairs(removals) do
 			self.branch = index
 			self.branches = #removals
-			self:Restore(current)
+			self:Restore(current, currentMasteries)
 			self.spec:DeallocNode(self.spec.nodes[id])
 			local reduced = copyTable(self.spec.allocNodes, true)
+			local reducedMasteries = copyTable(self.spec.masterySelections)
 			local cost = self.budget - self.spec:CountAllocNodes()
 			local additions = { }
 			if cost > 0 and cost <= self.depth then
@@ -236,7 +330,7 @@ function TreeOptimizer:Run()
 						local path = #node.intuitiveLeapLikesAffecting > 0 and { node } or node.path
 						local allowed = #path == cost
 						for _, pathNode in ipairs(path) do
-							if not TreeOptimizer.CanChange(pathNode, self.spec) then
+							if not TreeOptimizer.CanChange(pathNode, self.spec) or self.spec.optimizerBlocks[pathNode.id] then
 								allowed = false
 								break
 							end
@@ -246,44 +340,36 @@ function TreeOptimizer:Run()
 							for _, pathNode in ipairs(path) do
 								table.insert(ids, pathNode.id)
 							end
-							table.insert(additions, { id = targetId, path = ids })
+							if node.type == "Mastery" then
+								for _, effect in ipairs(self:MasteryEffects(node)) do
+									table.insert(additions, { id = targetId, path = ids, effect = effect })
+								end
+							else
+								table.insert(additions, { id = targetId, path = ids })
+							end
 						end
 					end
 				end
 			end
-			table.sort(additions, function(a, b) return a.id < b.id end)
+			table.sort(additions, function(a, b)
+				return a.id < b.id or a.id == b.id and (a.effect or 0) < (b.effect or 0)
+			end)
 			coroutine.yield()
 			for _, addition in ipairs(additions) do
-				self:Restore(reduced)
+				self:Restore(reduced, reducedMasteries)
 				local path = { }
 				for _, pathId in ipairs(addition.path) do
 					table.insert(path, self.spec.nodes[pathId])
 				end
-				self.spec:AllocNode(self.spec.nodes[addition.id], path)
-				local key = allocationKey(self.spec.allocNodes)
-				if not seen[key] and self:IsValid() then
-					seen[key] = true
-					local metrics, output = self:Metrics()
-					self.tested = self.tested + 1
-					local failure = not metrics and "DPS or EHP is not finite." or self:ConstraintFailure(output)
-					if metrics and not failure then
-						local score = self:Score(metrics)
-						if score > self.bestScore + 1e-9 then
-							self.best = copyTable(self.spec.allocNodes, true)
-							self.bestMetrics = metrics
-							self.bestScore = score
-							self.bestFeasible = true
-							self.improvements = self.improvements + 1
-						end
-					else
-						self.rejected = self.rejected + 1
-						self.lastRejection = failure
-					end
+				if addition.effect then
+					self.spec.masterySelections[addition.id] = addition.effect
 				end
+				self.spec:AllocNode(self.spec.nodes[addition.id], path)
+				self:Evaluate(seen)
 				coroutine.yield()
 			end
 		end
-		self:Restore(self.best)
+		self:Restore(self.best, self.bestMasteries)
 		if current == self.best then
 			self.done = true
 			return
@@ -292,7 +378,7 @@ function TreeOptimizer:Run()
 end
 
 function TreeOptimizer:Stop()
-	self:Restore(self.best)
+	self:Restore(self.best, self.bestMasteries)
 	self.done = true
 	self.worker = nil
 end

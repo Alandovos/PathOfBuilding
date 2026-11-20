@@ -676,7 +676,7 @@ function TreeTabClass:OpenOptimizerPopup()
 		{ label = "EHP, up to 0.5% DPS loss", value = "EHP" },
 	}
 	controls.info = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 20, 0, 14 },
-		"Reallocates existing points; saves a separate tree. Larger swaps take longer.\nMasteries, ascendancies and jewel sockets/contents stay fixed.\nAlt + right-click nodes on the tree to lock/unlock requirements.\nMana/life reservation and item/gem attribute requirements are always enforced.")
+		"Reallocates points and mastery effects; saves a separate tree.\nAscendancies, runegrafts and jewel sockets/contents stay fixed.\nAlt + right-click: require; Ctrl + Alt + right-click: block/unblock.\nMana/life reservation and item/gem attribute requirements are always enforced.")
 	controls.goalLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 93, 0, 16 }, "Goal:")
 	controls.goal = new("DropDownControl"):DropDownControl({ "TOPLEFT", nil, "TOPLEFT" }, { 140, 90, 300, 20 }, goals)
 	controls.depthLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 480, 93, 0, 16 }, "Max swap:")
@@ -769,7 +769,9 @@ function TreeTabClass:OpenOptimizerPopup()
 	controls.save = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 250, 514, 300, 24 }, "Use Best as New Tree", function()
 		optimizer:Stop()
 		local metrics, output = optimizer:Metrics()
-		local failure = not metrics and "DPS or EHP is not finite." or optimizer:ConstraintFailure(output)
+		local failure = not metrics and "DPS or EHP is not finite."
+			or not optimizer:IsValid() and "Passive allocation or mastery selection is invalid."
+			or optimizer:ConstraintFailure(output)
 		if failure then
 			optimizer.failed = true
 			main:OpenMessagePopup("Tree Optimizer Error", "Result is no longer feasible: "..failure)
