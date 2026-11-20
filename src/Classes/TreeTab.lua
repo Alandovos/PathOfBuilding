@@ -676,20 +676,20 @@ function TreeTabClass:OpenOptimizerPopup()
 		{ label = "EHP, up to 0.5% DPS loss", value = "EHP" },
 	}
 	controls.info = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 20, 0, 14 },
-		"Reallocates points and mastery effects; saves a separate tree.\nAscendancies, runegrafts and occupied jewel sockets stay fixed.\nAlt + right-click: require; Ctrl + Alt + right-click: block/unblock.\nMana/life reservation and item/gem attribute requirements are always enforced.")
-	controls.goalLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 93, 0, 16 }, "Goal:")
+		"^7Reallocates points and mastery effects; saves a separate tree.\nAscendancies, runegrafts and occupied jewel sockets stay fixed.\nAlt + right-click: require; Ctrl + Alt + right-click: block/unblock.\nMana/life reservation and item/gem attribute requirements are always enforced.")
+	controls.goalLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 93, 0, 16 }, "^7Goal:")
 	controls.goal = new("DropDownControl"):DropDownControl({ "TOPLEFT", nil, "TOPLEFT" }, { 140, 90, 300, 20 }, goals)
-	controls.depthLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 480, 93, 0, 16 }, "Max swap:")
+	controls.depthLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 480, 93, 0, 16 }, "^7Max swap:")
 	controls.depth = new("DropDownControl"):DropDownControl({ "TOPLEFT", nil, "TOPLEFT" }, { 600, 90, 100, 20 }, { 1, 3, 5, 10 })
 	controls.depth.selIndex = 2
-	controls.metricLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 123, 0, 16 }, "DPS metric:")
+	controls.metricLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 123, 0, 16 }, "^7DPS metric:")
 	controls.metric = new("DropDownControl"):DropDownControl({ "TOPLEFT", nil, "TOPLEFT" }, { 140, 120, 400, 20 }, {
 		{ label = "Selected skill (or its minion)", value = "CombinedDPS" },
 		{ label = "Full DPS (skills included in Full DPS)", value = "FullDPS" },
 	})
 	local _, output = self.build.calcsTab:GetMiscCalculator()
 	controls.metric.selIndex = output.FullDPS and output.FullDPS > 0 and 2 or 1
-	controls.constraintsLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 154, 0, 14 }, "Allowable reduction from starting values (100% = unrestricted):")
+	controls.constraintsLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 154, 0, 14 }, "^7Allowable reduction from starting values (100% = unrestricted):")
 	local constraintOptions = {
 		{ key = "elementalRes", label = "Elemental resistances", tooltip = "Applies separately to starting effective Fire, Cold and Lightning resistance, not overcap." },
 		{ key = "chaosRes", label = "Chaos resistance", tooltip = "Uses starting effective Chaos resistance, not overcap.\nFor negative resistance, the allowed decrease is a percentage of its absolute starting value." },
@@ -700,7 +700,7 @@ function TreeTabClass:OpenOptimizerPopup()
 	}
 	for index, option in ipairs(constraintOptions) do
 		local y = 178 + (index - 1) * 28
-		controls[option.key.."Label"] = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, y + 3, 0, 16 }, option.label)
+		controls[option.key.."Label"] = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, y + 3, 0, 16 }, "^7"..option.label)
 		local control = new("SliderControl"):SliderControl({ "TOPLEFT", nil, "TOPLEFT" }, { 390, y, 230, 20 }, nil,
 			{ ["SHIFT"] = 0.1, ["CTRL"] = 0.01, ["DEFAULT"] = 0.05 })
 		local saved = self.optimizerConstraints and self.optimizerConstraints[option.key]
@@ -722,7 +722,7 @@ function TreeTabClass:OpenOptimizerPopup()
 		end
 		controls[option.key] = control
 		controls[option.key.."Value"] = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 640, y + 3, 0, 16 }, function()
-			return s_format("%d%%", m_floor(control.val * 100 + 0.5))
+			return s_format("^7%d%%", m_floor(control.val * 100 + 0.5))
 		end)
 	end
 	controls.maxHit = new("CheckBoxControl"):CheckBoxControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 348, 20 }, "Don't reduce maximum hit taken", nil,
@@ -731,25 +731,25 @@ function TreeTabClass:OpenOptimizerPopup()
 	controls.maxHit.labelRight = true
 	controls.status = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 386, 0, 14 }, function()
 		if not optimizer then
-			return "Ready. Balanced maximizes DPS x EHP; either metric may fall.\nSingle-metric goals allow up to 0.5% loss in the other starting metric.\nOnly feasible results can be applied. Search is local, not a global optimum."
+			return "^7Ready. Balanced maximizes DPS x EHP; either metric may fall.\nSingle-metric goals allow up to 0.5% loss in the other starting metric.\nOnly feasible results can be applied. Search is local, not a global optimum."
 		elseif optimizer.failed then
 			return "^1Search failed. Original tree unchanged; see the error message."
 		elseif not optimizer.base then
-			return optimizer.done and "Stopped before initial calculation; no changes made." or "Calculating starting DPS and EHP..."
+			return optimizer.done and "^7Stopped before initial calculation; no changes made." or "^7Calculating starting DPS and EHP..."
 		end
 		local status = optimizer.done and (optimizer.stopped and "Stopped" or "Finished (local optimum)") or "Searching"
 		local metrics = optimizer.bestMetrics
 		if optimizer.done and not optimizer.bestFeasible then
 			status = "Finished: no feasible tree found"
 		end
-		return s_format("%s | Pass %d, branch %d/%d\nTested %d trees; rejected %d infeasible/non-finite\nDPS: %.6g -> %.6g (%+.4g%%)\nEHP: %.6g -> %.6g (%+.4g%%)%s",
+		return s_format("^7%s | Pass %d, branch %d/%d\nTested %d trees; rejected %d infeasible/non-finite\nDPS: %.6g -> %.6g (%+.4g%%)\nEHP: %.6g -> %.6g (%+.4g%%)%s",
 			status, optimizer.pass, optimizer.branch or 0, optimizer.branches or 0, optimizer.tested, optimizer.rejected,
 			optimizer.base.dps, metrics.dps, (metrics.dps / optimizer.base.dps - 1) * 100,
 			optimizer.base.ehp, metrics.ehp, (metrics.ehp / optimizer.base.ehp - 1) * 100,
 			not optimizer.bestFeasible and ("\nUnmet: "..optimizer.initialFailure) or "")
 	end)
 	controls.warning = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 474, 0, 14 },
-		"Uses your current skills, items and enemy/configuration settings.\nIf no feasible result is found, try larger swaps or fewer optional constraints.\nReview the result for other trade-offs before using it.")
+		"^7Uses your current skills, items and enemy/configuration settings.\nIf no feasible result is found, try larger swaps or fewer optional constraints.\nReview the result for other trade-offs before using it.")
 	local function running()
 		return optimizer and not optimizer.done and not optimizer.failed
 	end

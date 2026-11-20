@@ -1192,6 +1192,37 @@ Adds Hollow Palm Technique]])
 		assert(ok, err)
 	end)
 
+	it("keeps popup labels readable after a disabled slider draws black", function()
+		build.treeTab:OpenOptimizerPopup()
+		local popup = main.popups[1]
+		local drawString, setDrawColor = DrawString, SetDrawColor
+		local colour, drawn = { 0, 0, 0 }, 0
+		SetDrawColor = function(r, g, b)
+			colour = { r, g, b }
+		end
+		DrawString = function(_, _, _, _, _, text)
+			local effective = text:match("^%^7") and { 1, 1, 1 } or colour
+			assert(effective[1] == 1 and effective[2] == 1 and effective[3] == 1,
+				"Optimizer text inherited a dark drawing colour: "..text)
+			drawn = drawn + 1
+		end
+		local ok, err = xpcall(function()
+			popup.controls.start:Click()
+			assert(not popup.controls.castingHeadroom:IsEnabled())
+			for name, control in pairs(popup.controls) do
+				if name == "info" or name == "status" or name == "warning" or name:match("Label$") or name:match("Value$") then
+					popup.controls.castingHeadroom:Draw(main.viewPort)
+					assert(colour[1] == 0 and colour[2] == 0 and colour[3] == 0)
+					control:Draw()
+				end
+			end
+			assert(drawn > 10)
+		end, debug.traceback)
+		DrawString, SetDrawColor = drawString, setDrawColor
+		popup.controls.close:Click()
+		assert(ok, err)
+	end)
+
 	it("passes reduction sliders to the search and remembers them when reopened", function()
 		build.treeTab:OpenOptimizerPopup()
 		local popup = main.popups[1]
@@ -1201,7 +1232,7 @@ Adds Hollow Palm Technique]])
 		end
 		for key, reduction in pairs(reductions) do
 			popup.controls[key]:SetVal(reduction / 100)
-			assert(popup.controls[key.."Value"]:GetProperty("label") == reduction.."%")
+			assert(popup.controls[key.."Value"]:GetProperty("label") == "^7"..reduction.."%")
 		end
 		popup.controls.maxHit.state = true
 		popup.controls.start:Click()
