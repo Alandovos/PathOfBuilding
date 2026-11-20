@@ -780,13 +780,19 @@ Adds Hollow Palm Technique]])
 	it("uses actual PoB calculations for an improved result", function()
 		build.buildFlag = true
 		runCallback("OnFrame")
-		local optimizer = finish(build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS"))
+		local calculate = build.calcsTab:GetMiscCalculator()
+		local startingMana = calculate({ spec = build.spec }).ManaUnreserved
+		local protected = finish(build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS"))
+		local optimizer = finish(build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { availableMana = 100 }))
 		assert(optimizer.tested > 0 and optimizer.improvements > 0)
 		assert(optimizer.bestMetrics.dps > optimizer.base.dps)
 		assert(optimizer.bestMetrics.ehp >= optimizer.base.ehp)
-		local calculate = build.calcsTab:GetMiscCalculator()
+		assert(protected.bestMetrics.dps < optimizer.bestMetrics.dps, "Mana protection should reject this mana-losing swap")
 		local output = calculate({ spec = optimizer.spec })
 		assert(math.abs(output.CombinedDPS - optimizer.bestMetrics.dps) < 1e-8)
+		assert(output.ManaUnreserved < startingMana * 0.995,
+			string.format("Expected mana loss: starting %g, optimized %g", startingMana, output.ManaUnreserved))
+		assert(calculate({ spec = protected.spec }).ManaUnreserved >= startingMana * 0.995)
 	end)
 
 	it("rejects reservation and attribute violations even when DPS is higher", function()
@@ -917,6 +923,51 @@ Adds Hollow Palm Technique]])
 		end
 	end)
 
+	it("enforces percentage reductions at their boundaries for every slider", function()
+		for _, case in ipairs({
+			{ option = "elementalRes", stat = "ColdResist", start = 75 },
+			{ option = "chaosRes", stat = "ChaosResist", start = -60 },
+			{ option = "block", stat = "SpellBlockChance", start = 75 },
+			{ option = "suppression", stat = "SpellSuppressionChance", start = 100 },
+			{ option = "ailmentAvoidance", stat = "BrittleAvoidChance", start = 100 },
+			{ option = "availableMana", stat = "ManaUnreserved", start = 100 },
+		}) do
+			local function run(reduction, value)
+				local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { [case.option] = reduction })
+				optimizer.calculate = function(override)
+					local candidate = override.spec.allocNodes[alternative.id]
+					return feasibleOutput({ CombinedDPS = candidate and 200 or 100, [case.stat] = candidate and value or case.start })
+				end
+				return finish(optimizer)
+			end
+			for _, reduction in ipairs({ 0, 10 }) do
+				local minimum = case.start - math.abs(case.start) * (reduction == 0 and 0.005 or 0.1)
+				assert(run(reduction, minimum).bestMetrics.dps == 200, case.option.." rejected the boundary")
+				assert(run(reduction, minimum - 0.001).improvements == 0, case.option.." exceeded the reduction")
+			end
+			assert(run(100, case.start - math.abs(case.start)).bestMetrics.dps == 200, case.option.." should be unrestricted")
+		end
+	end)
+
+	it("anchors reduction targets to the initial tree and preserves available mana by default", function()
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { elementalRes = 10 })
+		optimizer:SetTargets(feasibleOutput())
+		assert(not optimizer:ConstraintFailure(feasibleOutput({ FireResist = 67.5, ManaUnreserved = 99.5 })))
+		assert(optimizer:ConstraintFailure(feasibleOutput({ FireResist = 67.499 })))
+		assert(optimizer:ConstraintFailure(feasibleOutput({ ManaUnreserved = 99.499 })):match("Available mana"))
+		local unrestricted = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { availableMana = 100 })
+		unrestricted:SetTargets(feasibleOutput())
+		assert(not unrestricted:ConstraintFailure(feasibleOutput({ ManaUnreserved = 0 })))
+		assert(unrestricted:ConstraintFailure(feasibleOutput({ ManaUnreserved = -1 })):match("Mana reservation"))
+	end)
+
+	it("rejects invalid allowable reductions", function()
+		for _, value in ipairs({ -1, 101, math.huge, 0 / 0 }) do
+			local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { availableMana = value })
+			assert(not pcall(function() optimizer:SetTargets(feasibleOutput()) end))
+		end
+	end)
+
 	it("can find a feasible result from an infeasible start without returning invalid trees", function()
 		local optimizer = build.treeTab:CreateTreeOptimizer("BALANCED", 1, "CombinedDPS", { suppression = true })
 		optimizer.calculate = function(override)
@@ -990,7 +1041,7 @@ Adds Hollow Palm Technique]])
 				end
 				assert(x >= left and y >= top and x + w <= left + width and y + h <= top + height, name.." exceeds popup bounds")
 			end
-			popup.controls.suppression:SelByValue("CAP", "value")
+			popup.controls.suppression:SetVal(0)
 			popup.controls.start:Click()
 			local frames = 0
 			while not popup.controls.status:GetProperty("label"):match("Finished") do
@@ -998,8 +1049,7 @@ Adds Hollow Palm Technique]])
 				frames = frames + 1
 				assert(frames < 1000)
 			end
-			assert(not popup.controls.save:GetProperty("enabled"), "Uncapped suppression result must not be applicable")
-			assert(popup.controls.status:GetProperty("label"):match("no feasible tree"))
+			assert(not popup.controls.status:GetProperty("label"):match("Search failed"))
 			assert(popup.controls.status:GetProperty("width") <= width - 40)
 			popup.controls.close:Click()
 		end, debug.traceback)
@@ -1007,17 +1057,20 @@ Adds Hollow Palm Technique]])
 		assert(ok, err)
 	end)
 
-	it("passes defence modes to the search and remembers them when reopened", function()
+	it("passes reduction sliders to the search and remembers them when reopened", function()
 		build.treeTab:OpenOptimizerPopup()
 		local popup = main.popups[1]
-		local modes = { elementalRes = "KEEP", chaosRes = "NONE", block = "CAP", suppression = "KEEP", ailmentAvoidance = "KEEP" }
-		for key, mode in pairs(modes) do
-			popup.controls[key]:SelByValue(mode, "value")
+		assert(popup.controls.availableMana.val == 0)
+		assert(popup.controls.elementalRes.val == 1)
+		local reductions = { elementalRes = 0, chaosRes = 100, block = 10, suppression = 20, ailmentAvoidance = 30, availableMana = 5 }
+		for key, reduction in pairs(reductions) do
+			popup.controls[key]:SetVal(reduction / 100)
+			assert(popup.controls[key.."Value"]:GetProperty("label") == reduction.."%")
 		end
 		popup.controls.maxHit.state = true
 		popup.controls.start:Click()
-		for key, mode in pairs(modes) do
-			assert(build.treeTab.optimizerConstraints[key] == mode)
+		for key, reduction in pairs(reductions) do
+			assert(build.treeTab.optimizerConstraints[key] == reduction)
 			assert(not popup.controls[key]:IsEnabled())
 		end
 		assert(not popup.controls.maxHit:IsEnabled())
@@ -1025,9 +1078,9 @@ Adds Hollow Palm Technique]])
 		popup.controls.close:Click()
 		build.treeTab:OpenOptimizerPopup()
 		popup = main.popups[1]
-		for key, mode in pairs(modes) do
+		for key, reduction in pairs(reductions) do
 			local control = popup.controls[key]
-			assert(control.list[control.selIndex].value == mode)
+			assert(math.abs(control.val * 100 - reduction) < 1e-8)
 		end
 		assert(popup.controls.maxHit.state)
 		popup.controls.close:Click()
@@ -1040,6 +1093,7 @@ Adds Hollow Palm Technique]])
 		local count = #build.treeTab.specList
 		build.treeTab:OpenOptimizerPopup()
 		local popup = main.popups[1]
+		popup.controls.availableMana:SetVal(1)
 		popup.controls.start:Click()
 		local frames = 0
 		repeat

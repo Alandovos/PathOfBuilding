@@ -143,7 +143,10 @@ function TreeOptimizer:Metrics()
 end
 
 function TreeOptimizer.GetConstraintMode(value)
-	if value == nil or value == false then
+	if type(value) == "number" then
+		assert(value == value and value >= 0 and value <= 100, "Allowable reduction must be between 0 and 100")
+		return value
+	elseif value == nil or value == false then
 		return "NONE"
 	elseif value == true then
 		return "CAP"
@@ -153,44 +156,51 @@ function TreeOptimizer.GetConstraintMode(value)
 end
 
 function TreeOptimizer:SetTargets(output)
-	local function add(stat, minimum, label, capStat, missingStat)
-		assert(type(minimum) == "number" and minimum == minimum,
+	local function add(mode, stat, label, capStat, missingStat, cap)
+		if mode == "NONE" or mode == 100 then
+			return
+		end
+		local minimum = output[stat]
+		assert(type(minimum) == "number" and minimum == minimum and math.abs(minimum) < math.huge,
 			"Cannot determine optimizer target: "..label)
+		if type(mode) == "number" then
+			minimum = minimum - math.abs(minimum) * math.max(0.5, mode) / 100
+		elseif mode == "CAP" then
+			minimum = cap or (capStat and output[capStat]) or (minimum + output[missingStat])
+		end
+		if mode ~= "CAP" then
+			capStat, missingStat = nil, nil
+		end
 		table.insert(self.targets, { stat = stat, minimum = minimum, label = label, capStat = capStat, missingStat = missingStat })
 	end
 	for _, damageType in ipairs({ "Fire", "Cold", "Lightning", "Chaos" }) do
 		local mode = TreeOptimizer.GetConstraintMode(self.constraints[damageType == "Chaos" and "chaosRes" or "elementalRes"])
 		if mode ~= "NONE" then
 			local stat = damageType.."Resist"
-			if mode == "KEEP" then
-				add(stat, output[stat], damageType.." resistance")
-			else
-				local missingStat = "Missing"..stat
-				assert(type(output[stat]) == "number" and type(output[missingStat]) == "number",
-					"Missing calculated resistance cap: "..damageType)
-				add(stat, output[stat] + output[missingStat], damageType.." resistance", nil, missingStat)
-			end
+			add(mode, stat, damageType.." resistance", nil, "Missing"..stat)
 		end
 	end
 	local blockMode = TreeOptimizer.GetConstraintMode(self.constraints.block)
 	if blockMode ~= "NONE" then
-		add("BlockChance", blockMode == "CAP" and output.BlockChanceMax or output.BlockChance, "Attack block", blockMode == "CAP" and "BlockChanceMax" or nil)
-		add("SpellBlockChance", blockMode == "CAP" and output.SpellBlockChanceMax or output.SpellBlockChance, "Spell block", blockMode == "CAP" and "SpellBlockChanceMax" or nil)
+		add(blockMode, "BlockChance", "Attack block", "BlockChanceMax")
+		add(blockMode, "SpellBlockChance", "Spell block", "SpellBlockChanceMax")
 	end
 	local suppressionMode = TreeOptimizer.GetConstraintMode(self.constraints.suppression)
 	if suppressionMode ~= "NONE" then
-		add("SpellSuppressionChance", suppressionMode == "CAP" and data.misc.SuppressionChanceCap or output.SpellSuppressionChance, "Spell suppression")
+		add(suppressionMode, "SpellSuppressionChance", "Spell suppression", nil, nil, data.misc.SuppressionChanceCap)
 	end
 	local avoidanceMode = TreeOptimizer.GetConstraintMode(self.constraints.ailmentAvoidance)
 	if avoidanceMode ~= "NONE" then
 		for _, ailment in ipairs(data.elementalAilmentTypeList) do
-			add(ailment.."AvoidChance", avoidanceMode == "CAP" and 100 or output[ailment.."AvoidChance"], ailment.." avoidance")
+			add(avoidanceMode, ailment.."AvoidChance", ailment.." avoidance", nil, nil, 100)
 		end
 	end
+	add(TreeOptimizer.GetConstraintMode(self.constraints.availableMana == nil and 0 or self.constraints.availableMana),
+		"ManaUnreserved", "Available mana (unreserved)")
 	if self.constraints.maxHit then
 		for _, damageType in ipairs({ "Physical", "Fire", "Cold", "Lightning", "Chaos" }) do
 			local stat = damageType.."MaximumHitTaken"
-			add(stat, output[stat], damageType.." maximum hit taken")
+			add("KEEP", stat, damageType.." maximum hit taken")
 		end
 	end
 end

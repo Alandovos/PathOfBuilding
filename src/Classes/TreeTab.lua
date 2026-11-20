@@ -689,31 +689,47 @@ function TreeTabClass:OpenOptimizerPopup()
 	})
 	local _, output = self.build.calcsTab:GetMiscCalculator()
 	controls.metric.selIndex = output.FullDPS and output.FullDPS > 0 and 2 or 1
-	controls.constraintsLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 154, 0, 14 }, "Defence requirements (Don't reduce = starting values):")
-	local constraintModes = {
-		{ label = "Unrestricted", value = "NONE" },
-		{ label = "Don't reduce", value = "KEEP" },
-		{ label = "Cap", value = "CAP" },
-	}
+	controls.constraintsLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 154, 0, 14 }, "Allowable reduction from starting values (100% = unrestricted):")
 	local constraintOptions = {
-		{ key = "elementalRes", label = "Elemental resistances", tooltip = "Don't reduce: preserve each starting effective Fire, Cold and Lightning resistance (not overcap).\nCap: reach each candidate maximum, without lowering your starting resistance caps." },
-		{ key = "chaosRes", label = "Chaos resistance", tooltip = "Don't reduce: preserve starting effective Chaos resistance, even if negative (not overcap).\nCap: reach the candidate maximum, without lowering your starting cap." },
-		{ key = "block", label = "Attack + spell block", tooltip = "Don't reduce: preserve attack and spell block separately at their starting chances.\nCap: cap both, without lowering either starting maximum block cap." },
-		{ key = "suppression", label = "Spell suppression", tooltip = "Don't reduce: preserve starting suppression chance.\nCap: require 100%. Both use chance before lucky/unlucky adjustments." },
-		{ key = "ailmentAvoidance", label = "Elemental ailment avoidance", tooltip = "Don't reduce: preserve each elemental ailment's starting avoidance separately.\nCap: require 100% avoidance or immunity for every elemental ailment, including alternate ailments." },
+		{ key = "elementalRes", label = "Elemental resistances", tooltip = "Applies separately to starting effective Fire, Cold and Lightning resistance, not overcap." },
+		{ key = "chaosRes", label = "Chaos resistance", tooltip = "Uses starting effective Chaos resistance, not overcap.\nFor negative resistance, the allowed decrease is a percentage of its absolute starting value." },
+		{ key = "block", label = "Attack + spell block", tooltip = "Applies separately to starting attack and spell block chances." },
+		{ key = "suppression", label = "Spell suppression", tooltip = "Uses starting suppression chance before lucky/unlucky adjustments." },
+		{ key = "ailmentAvoidance", label = "Elemental ailment avoidance", tooltip = "Applies separately to each elemental ailment's starting avoidance, including alternate ailments.\nEven the 0.5% tolerance can allow losing full avoidance/immunity." },
+		{ key = "availableMana", label = "Available mana (unreserved)", default = 0, tooltip = "Preserves a portion of your starting unreserved mana capacity; defaults to 0% allowable reduction.\nThis is not minimum mana remaining while casting and does not guarantee movement/guard-skill affordability or sustained recovery.\nIf the starting build has zero unreserved mana, preserving it does not create a safety buffer." },
 	}
 	for index, option in ipairs(constraintOptions) do
 		local y = 178 + (index - 1) * 28
 		controls[option.key.."Label"] = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, y + 3, 0, 16 }, option.label)
-		local control = new("DropDownControl"):DropDownControl({ "TOPLEFT", nil, "TOPLEFT" }, { 390, y, 310, 20 }, constraintModes, nil, option.tooltip)
-		control:SelByValue(TreeOptimizer.GetConstraintMode(self.optimizerConstraints and self.optimizerConstraints[option.key]), "value")
+		local control = new("SliderControl"):SliderControl({ "TOPLEFT", nil, "TOPLEFT" }, { 390, y, 230, 20 }, nil,
+			{ ["SHIFT"] = 0.1, ["CTRL"] = 0.01, ["DEFAULT"] = 0.05 })
+		local saved = self.optimizerConstraints and self.optimizerConstraints[option.key]
+		if saved == nil then
+			saved = option.default or 100
+		else
+			saved = TreeOptimizer.GetConstraintMode(saved)
+			if type(saved) ~= "number" then
+				saved = saved == "NONE" and 100 or 0
+			end
+		end
+		control:SetVal(saved / 100)
+		control.tooltipFunc = function(tooltip)
+			tooltip:Clear()
+			tooltip:AddLine(14, option.tooltip)
+			tooltip:AddLine(14, "0% allows a fixed 0.5% tolerance. 100% removes this optional requirement.")
+			tooltip:AddLine(14, "Reduction is relative to the starting value, not percentage points or the last accepted tree.")
+			tooltip:AddLine(14, "Preserves starting values; does not force uncapped defences to reach their caps.")
+		end
 		controls[option.key] = control
+		controls[option.key.."Value"] = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 640, y + 3, 0, 16 }, function()
+			return s_format("%d%%", m_floor(control.val * 100 + 0.5))
+		end)
 	end
-	controls.maxHit = new("CheckBoxControl"):CheckBoxControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 320, 20 }, "Don't reduce maximum hit taken", nil,
+	controls.maxHit = new("CheckBoxControl"):CheckBoxControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 348, 20 }, "Don't reduce maximum hit taken", nil,
 		"Preserve starting Physical, Fire, Cold, Lightning and Chaos maximum hit taken separately.",
 		self.optimizerConstraints and self.optimizerConstraints.maxHit or false)
 	controls.maxHit.labelRight = true
-	controls.status = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 358, 0, 14 }, function()
+	controls.status = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 386, 0, 14 }, function()
 		if not optimizer then
 			return "Ready. Balanced maximizes DPS x EHP; either metric may fall.\nSingle-metric goals allow up to 0.5% loss in the other starting metric.\nOnly feasible results can be applied. Search is local, not a global optimum."
 		elseif optimizer.failed then
@@ -732,12 +748,12 @@ function TreeTabClass:OpenOptimizerPopup()
 			optimizer.base.ehp, metrics.ehp, (metrics.ehp / optimizer.base.ehp - 1) * 100,
 			not optimizer.bestFeasible and ("\nUnmet: "..optimizer.initialFailure) or "")
 	end)
-	controls.warning = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 446, 0, 14 },
+	controls.warning = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 474, 0, 14 },
 		"Uses your current skills, items and enemy/configuration settings.\nIf no feasible result is found, try larger swaps or fewer optional constraints.\nReview the result for other trade-offs before using it.")
 	local function running()
 		return optimizer and not optimizer.done and not optimizer.failed
 	end
-	controls.start = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 514, 100, 24 }, "Start", function()
+	controls.start = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 542, 100, 24 }, "Start", function()
 		for id in pairs(source.optimizerLocks) do
 			if not source.allocNodes[id] then
 				main:OpenMessagePopup("Required Node Unallocated", "Alt + right-click the unallocated required node to unlock it, or allocate it before optimizing.")
@@ -747,7 +763,7 @@ function TreeTabClass:OpenOptimizerPopup()
 		self.optimizerConstraints = { }
 		for _, option in ipairs(constraintOptions) do
 			local control = controls[option.key]
-			self.optimizerConstraints[option.key] = control.list[control.selIndex].value
+			self.optimizerConstraints[option.key] = m_floor(control.val * 100 + 0.5)
 		end
 		self.optimizerConstraints.maxHit = controls.maxHit.state
 		optimizer = self:CreateTreeOptimizer(goals[controls.goal.selIndex].value,
@@ -761,12 +777,12 @@ function TreeTabClass:OpenOptimizerPopup()
 		controls[option.key].enabled = controls.start.enabled
 	end
 	controls.maxHit.enabled = controls.start.enabled
-	controls.stop = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 135, 514, 100, 24 }, "Stop", function()
+	controls.stop = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 135, 542, 100, 24 }, "Stop", function()
 		optimizer:Stop()
 		optimizer.stopped = true
 	end)
 	controls.stop.enabled = running
-	controls.save = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 250, 514, 300, 24 }, "Use Best as New Tree", function()
+	controls.save = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 250, 542, 300, 24 }, "Use Best as New Tree", function()
 		optimizer:Stop()
 		local metrics, output = optimizer:Metrics()
 		local failure = not metrics and "DPS or EHP is not finite."
@@ -788,10 +804,10 @@ function TreeTabClass:OpenOptimizerPopup()
 	controls.save.enabled = function()
 		return optimizer and optimizer.done and not optimizer.failed and optimizer.bestFeasible and optimizer.improvements > 0
 	end
-	controls.close = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 600, 514, 100, 24 }, "Close", function()
+	controls.close = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 600, 542, 100, 24 }, "Close", function()
 		main:ClosePopup()
 	end)
-	main:OpenPopup(760, 560, "Optimize Passive Tree", controls, nil, nil, "close", nil, function()
+	main:OpenPopup(760, 588, "Optimize Passive Tree", controls, nil, nil, "close", nil, function()
 		if not running() then
 			return
 		end

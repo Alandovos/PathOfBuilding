@@ -84,12 +84,16 @@ Close (or Escape) discards the search. No changes are made unless you use the re
 This is a local search, not an exhaustive/global optimizer; it can miss improvements requiring other swaps.
 Results must leave non-negative unreserved mana, positive unreserved life, and meet item/gem attribute
 requirements (including Omniscience). These checks cannot be disabled.
-Defence dropdowns offer Unrestricted, Don't reduce, or Cap for elemental/chaos resistance, attack AND
-spell block, spell suppression, and elemental ailment avoidance.
-"Don't reduce" preserves each starting effective resistance/chance separately, even if below cap
-or negative. It does not preserve overcapped resistance or require improvements to reach the cap.
-"Cap" requires capped values (100% suppression/ailment avoidance or immunity for ALL elemental ailments).
-Resistance/block caps cannot be lowered to pass a Cap check.
+Allowable-reduction sliders range from 0% to 100% for elemental/chaos resistance, attack AND spell
+block, spell suppression, elemental ailment avoidance, and available mana (unreserved).
+0% permits a fixed 0.5% reduction tolerance; 100% removes that optional requirement.
+Reductions are relative to each starting value, not percentage points or the last accepted tree.
+Negative resistance can fall by the selected percentage of its absolute starting value.
+Grouped stats are checked separately. These preserve effective values, not overcap, and do not force
+uncapped defences to reach their caps. Even the tolerance can allow losing full ailment avoidance.
+Defence sliders default to 100% (unrestricted); available mana defaults to 0% allowable reduction.
+Available mana protects starting unreserved capacity, not mana remaining during continuous casting.
+It does not guarantee recovery or emergency-skill affordability, or fix an already empty starting pool.
 "Don't reduce maximum hit taken" keeps every damage type's maximum hit at least at its starting value.
 If the starting tree fails a requirement, the search can still find a feasible branch swap; no invalid
 tree can be applied. Larger swaps may help, but this local search cannot guarantee a feasible result.
