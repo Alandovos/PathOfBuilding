@@ -4478,6 +4478,8 @@ local specialModList = {
 	["inflict hallowing flame on hit while on consecrated ground"] = { flag("Condition:CanInflictHallowingFlame", { type = "Condition", var = "OnConsecratedGround" }) },
 	["inflict hallowing flame on melee hit"] = { flag("Condition:CanInflictHallowingFlame") },
 	-- Traps, Mines
+	["mines can be detonated an additional time"] = { mod("MineExtraUses", "BASE", 1) },
+	["mines can be detonated (%d+) additional times?"] = function(num) return { mod("MineExtraUses", "BASE", num) } end,
 	["traps and mines deal (%d+)%-(%d+) additional physical damage"] = function(_, min, max) return { mod("PhysicalMin", "BASE", tonumber(min), nil, 0, bor(KeywordFlag.Trap, KeywordFlag.Mine)), mod("PhysicalMax", "BASE", tonumber(max), nil, 0, bor(KeywordFlag.Trap, KeywordFlag.Mine)) } end,
 	["traps and mines deal (%d+) to (%d+) additional physical damage"] = function(_, min, max) return { mod("PhysicalMin", "BASE", tonumber(min), nil, 0, bor(KeywordFlag.Trap, KeywordFlag.Mine)), mod("PhysicalMax", "BASE", tonumber(max), nil, 0, bor(KeywordFlag.Trap, KeywordFlag.Mine)) } end,
 	["each mine applies (%d+)%% increased damage taken to enemies near it, up to (%d+)%%"] = function(num, _, limit) return { mod("EnemyModifier", "LIST", { mod = mod("DamageTaken", "INC", num, { type = "Multiplier", var = "ActiveMineCount", limit = limit / num }) }) } end,

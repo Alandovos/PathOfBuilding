@@ -18161,8 +18161,7 @@ c["Mind Over Matter"]={{[1]={flags=0,keywordFlags=0,name="Keystone",type="LIST",
 c["Mine Damage Penetrates 10% Elemental Resistances"]={{[1]={flags=0,keywordFlags=8192,name="ElementalPenetration",type="BASE",value=10}},nil}
 c["Mine Damage Penetrates 4% Elemental Resistances"]={{[1]={flags=0,keywordFlags=8192,name="ElementalPenetration",type="BASE",value=4}},nil}
 c["Mines Hinder Enemies within 3 metres for 2 seconds when they Land"]={nil,"Mines Hinder Enemies within 3 metres for 2 seconds when they Land "}
-c["Mines can be Detonated an additional time"]={nil,"Mines can be Detonated an additional time "}
-c["Mines can be Detonated an additional time 50% increased Effect of Auras from Mines"]={nil,"Mines can be Detonated an additional time 50% increased Effect of Auras from Mines "}
+c["Mines can be Detonated an additional time"]={{[1]={flags=0,keywordFlags=0,name="MineExtraUses",type="BASE",value=1}},nil}
 c["Mines cannot be Damaged"]={nil,"Mines cannot be Damaged "}
 c["Mines have 15% increased Detonation Speed"]={{[1]={flags=0,keywordFlags=8192,name="MineDetonationSpeed",type="INC",value=15}},nil}
 c["Mines have 20% increased Detonation Speed"]={{[1]={flags=0,keywordFlags=8192,name="MineDetonationSpeed",type="INC",value=20}},nil}
@@ -18170,8 +18169,8 @@ c["Mines have 22% increased Detonation Speed"]={{[1]={flags=0,keywordFlags=8192,
 c["Mines have 30% increased Detonation Speed"]={{[1]={flags=0,keywordFlags=8192,name="MineDetonationSpeed",type="INC",value=30}},nil}
 c["Mines have 45% increased Detonation Speed"]={{[1]={flags=0,keywordFlags=8192,name="MineDetonationSpeed",type="INC",value=45}},nil}
 c["Mines have 50% increased Detonation Speed"]={{[1]={flags=0,keywordFlags=8192,name="MineDetonationSpeed",type="INC",value=50}},nil}
-c["Mines have a 10% chance to be Detonated an Additional Time"]={nil,"Mines have a 10% chance to be Detonated an Additional Time "}
-c["Mines have a 15% chance to be Detonated an Additional Time"]={nil,"Mines have a 15% chance to be Detonated an Additional Time "}
+c["Mines have a 10% chance to be Detonated an Additional Time"]={nil,"a 10% chance to be Detonated an Additional Time "}
+c["Mines have a 15% chance to be Detonated an Additional Time"]={nil,"a 15% chance to be Detonated an Additional Time "}
 c["Minion Instability"]={{[1]={flags=0,keywordFlags=0,name="Keystone",type="LIST",value="Minion Instability"},[2]={flags=0,keywordFlags=0,name="Condition:HaveMinionInstability",type="FLAG",value=true}},nil}
 c["Minion Life is increased by their Overcapped Fire Resistance"]={{[1]={flags=0,keywordFlags=0,name="MinionModifier",type="LIST",value={mod={[1]={div=1,stat="FireResistOverCap",type="PerStat"},flags=0,keywordFlags=0,name="Life",type="INC",value=1}}}},nil}
 c["Minion Spells Triggered by this Item have a 0.25 second Cooldown with 5 Uses"]={nil,"Minion Spells Triggered by this Item have a 0.25 second Cooldown with 5 Uses "}
@@ -20005,10 +20004,10 @@ c["Requires Class Scion Allocates Inquisitor if you have the matching modifier o
 c["Requires Class Scion Allocates Juggernaut if you have the matching modifier on Forbidden Flame"]={nil,"Requires Class Scion Allocates Juggernaut if you have the matching modifier on Forbidden Flame "}
 c["Requires Class Scion Allocates Juggernaut if you have the matching modifier on Forbidden Flesh"]={nil,"Requires Class Scion Allocates Juggernaut if you have the matching modifier on Forbidden Flesh "}
 c["Requires Class Scion Allocates Necromancer if you have the matching modifier on Forbidden Flame"]={nil,"Requires Class Scion Allocates Necromancer if you have the matching modifier on Forbidden Flame "}
-end)();(function()
 c["Requires Class Scion Allocates Necromancer if you have the matching modifier on Forbidden Flesh"]={nil,"Requires Class Scion Allocates Necromancer if you have the matching modifier on Forbidden Flesh "}
 c["Requires Class Scion Allocates Occultist if you have the matching modifier on Forbidden Flame"]={nil,"Requires Class Scion Allocates Occultist if you have the matching modifier on Forbidden Flame "}
 c["Requires Class Scion Allocates Occultist if you have the matching modifier on Forbidden Flesh"]={nil,"Requires Class Scion Allocates Occultist if you have the matching modifier on Forbidden Flesh "}
+end)();(function()
 c["Requires Class Scion Allocates Pathfinder if you have the matching modifier on Forbidden Flame"]={nil,"Requires Class Scion Allocates Pathfinder if you have the matching modifier on Forbidden Flame "}
 c["Requires Class Scion Allocates Pathfinder if you have the matching modifier on Forbidden Flesh"]={nil,"Requires Class Scion Allocates Pathfinder if you have the matching modifier on Forbidden Flesh "}
 c["Requires Class Scion Allocates Saboteur if you have the matching modifier on Forbidden Flame"]={nil,"Requires Class Scion Allocates Saboteur if you have the matching modifier on Forbidden Flame "}

@@ -277,6 +277,138 @@ describe("TestOffence", function()
 			assert.is_true(output.MineEffectiveRate <= output.MineLayingSpeed * output.MineThrowCount)
 		end)
 
+		for _, name in ipairs({ "Pyroclast Mine", "Pyroclast Mine of Sabotage" }) do
+			for _, automated in ipairs({ false, true }) do
+				it("models Tremor Rod re-arming for " .. name .. (automated and " with Automation" or " with manual detonation"), function()
+					build.skillsTab:PasteSocketGroup(name .. " 20/0  1")
+					build.skillsTab.socketGroupList[1].includeInFullDPS = true
+					if automated then
+						build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+					end
+					local baselineDPS = update().TotalDPS
+					build.itemsTab:CreateDisplayItemFromRaw("Rarity: UNIQUE\nTremor Rod\nMilitary Staff\nImplicits: 0\nMines can be Detonated an additional time")
+					build.itemsTab:AddDisplayItem()
+					local output = update()
+					assert.are.equals(1, output.MineExtraUses)
+					assert.near(0.18, output.MineRearmTime, 0.000001)
+					assert.is_true(output.MineReusedRate > 0)
+					assert.is_true(output.MineDetonationsPerMine > 1)
+					assert.is_true(output.MineDetonationsPerMine <= 2)
+					assert.is_true(output.MineEffectiveRate <= 2 * output.MineLayingSpeed * output.MineThrowCount)
+					assert.is_true(output.TotalDPS > baselineDPS)
+					assert.is_true(math.abs(output.TotalDPS - 2 * baselineDPS) > 0.01)
+					assert.near(output.CombinedDPS, output.FullDPS, 0.000001)
+					assert.near(output.TotalDPS, build.calcsTab.calcsOutput.TotalDPS, 0.000001)
+					local expectedDPS = output.TotalDPS
+					local xml = build:SaveDB("Re-arming Pyroclast")
+					loadBuildFromXML(xml, "Re-arming Pyroclast")
+					assert.near(expectedDPS, build.calcsTab.mainOutput.TotalDPS, 0.000001)
+				end)
+			end
+		end
+
+		for _, automated in ipairs({ false, true }) do
+			it("recognizes the actual Foulborn Tremor Rod passive" .. (automated and " with Automation" or " with manual detonation"), function()
+				build.spec:SelectClass(build.spec.tree.classNameMap.Scion)
+				build.spec:SelectAscendClass(build.spec.tree.ascendNameMap.Reliquarian.ascendClassId)
+				build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+				if automated then
+					build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+				end
+				update()
+				local node = build.spec.nodes[43857]
+				local skill = build.calcsTab.mainEnv.player.mainSkill
+				local auraEffect = skill.skillModList:Sum("INC", skill.skillCfg, "AuraEffect")
+				build.spec:AllocNode(node)
+				build.buildFlag = true
+				local output = update()
+				assert.is_true(node.alloc)
+				assert.are.equals(1, output.MineExtraUses)
+				assert.is_true(output.MineReusedRate > 0)
+				assert.is_true(output.MineDetonationsPerMine <= 2)
+				skill = build.calcsTab.mainEnv.player.mainSkill
+				assert.are.equals(auraEffect + 50, skill.skillModList:Sum("INC", skill.skillCfg, "AuraEffect"))
+			end)
+		end
+
+		it("scales Pyroclast re-arming with cast speed but not the owner's action speed", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			local rod = "Mines can be Detonated an additional time"
+			local output = update({ customMods = rod .. "\n100% increased Cast Speed" })
+			assert.near(0.09, output.MineRearmTime, 0.000001)
+			output = update({ customMods = rod .. "\n20% increased Action Speed" })
+			assert.near(1.2, output.ActionSpeedMod, 0.000001)
+			assert.near(0.18, output.MineRearmTime, 0.000001)
+			output = update({ customMods = rod .. "\n99% reduced Cast Speed" })
+			assert.near(18, output.MineRearmTime, 0.000001)
+			assert.are.equals(0, output.MineReusedRate)
+		end)
+
+		it("does not re-arm expired Pyroclast mines in either detonation mode", function()
+			for _, automated in ipairs({ false, true }) do
+				newBuild()
+				build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+				if automated then
+					build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+				end
+				local output = update({ customMods = "Mines can be Detonated an additional time\n99% reduced Mine Duration" })
+				assert.are.equals(0, output.MineReusedRate)
+				assert.is_true(output.MineDetonationsPerMine <= 1)
+			end
+		end)
+
+		it("preserves the original Pyroclast expiry through multiple guaranteed extra uses", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			local mods = "Mines can be Detonated 2 additional times\n1000% increased Cast Speed\n1000% increased Cooldown Recovery Rate\n1000% increased Mine Throwing Speed\nMines have 10000% increased Detonation Speed"
+			local output = update({ customMods = mods })
+			assert.are.equals(2, output.MineExtraUses)
+			assert.is_true(output.MineDetonationsPerMine > 2)
+			assert.is_true(output.MineDetonationsPerMine <= 3)
+			output = update({ customMods = mods .. "\n99% reduced Mine Duration" })
+			assert.is_true(output.MineReusedRate > 0)
+			assert.is_true(output.MineDetonationsPerMine <= 2)
+		end)
+
+		it("counts re-arming Pyroclast mines against the active limit so new throws can displace them", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			local output = update({ customMods = "Mines can be Detonated an additional time\n10000% increased Mine Throwing Speed\n90% reduced Cast Speed" })
+			assert.near(1.8, output.MineRearmTime, 0.000001)
+			assert.is_true(output.MineLayingSpeed * output.MineRearmTime > output.ActiveMineLimit)
+			assert.are.equals(0, output.MineReusedRate)
+			assert.is_true(output.MineDetonationsPerMine <= 1)
+		end)
+
+		it("handles zero throwing, trigger recovery and cast speed with extra Pyroclast uses", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			build.skillsTab:PasteSocketGroup("Detonate Mines 1/0  1\nAutomation 20/0  1")
+			local rod = "Mines can be Detonated an additional time\n"
+			for _, mod in ipairs({ "100% reduced Mine Throwing Speed", "100% reduced Cooldown Recovery Rate", "100% reduced Mine Duration" }) do
+				local output = update({ customMods = rod .. mod })
+				assert.are.equals(0, output.TotalDPS)
+				assert.are.equals(0, output.MineReusedRate)
+			end
+			local output = update({ customMods = rod .. "100% reduced Cast Speed" })
+			assert.is_true(output.TotalDPS > 0)
+			assert.are.equals(0, output.MineReusedRate)
+		end)
+
+		it("does not treat a manual restart as a continuation of the previous Pyroclast sequence", function()
+			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1")
+			local output = update({ customMods = "Mines can be Detonated an additional time", pyroclastMineSequenceCount = 1 })
+			assert.are.equals(2, output.MineDetonationsPerMine)
+			assert.are.equals(1, output.MineSequenceCount)
+			assert.are.equals(3, output.MineSequenceAverageProjectiles)
+			build.skillsTab.socketGroupList[1].gemList[1].skillPart = 2
+			build.buildFlag = true
+			output = update()
+			assert.is_nil(output.MineRearmTime)
+			assert.is_nil(output.MineSequenceCount)
+			assert.near(output.AverageDamage * output.MineLayingSpeed * output.MineThrowCount, output.TotalDPS, 0.000001)
+		end)
+
 		it("shows automated sequence breakdowns, survives saving and preserves single-hit mode", function()
 			build.skillsTab:PasteSocketGroup("Pyroclast Mine 20/0  1\nMinefield 20/0  1")
 			build.skillsTab:PasteSocketGroup("Detonate Mines 1/20  1\nAutomation 20/20  1")

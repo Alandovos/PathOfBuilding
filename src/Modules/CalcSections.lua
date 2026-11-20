@@ -864,7 +864,10 @@ return {
 		{ modName = "SealGainFrequency", cfg = "skill" }, 
 	}, },
 	-- Mines
-	{ label = "Sequence Mines", haveOutput = "MineSequenceCount", { format = "{3:output:MineSequenceCount}", { breakdown = "MineSequenceCount" }, }, },
+	{ label = "Sequence Detonations", haveOutput = "MineSequenceCount", { format = "{3:output:MineSequenceCount}", { breakdown = "MineSequenceCount" }, }, },
+	{ label = "Mine Re-arm Time", haveOutput = "MineRearmTime", { format = "{3:output:MineRearmTime}s", { breakdown = "MineRearmTime" }, { modName = "Speed", cfg = "skill" }, }, },
+	{ label = "Detonations / Mine", haveOutput = "MineDetonationsPerMine", { format = "{3:output:MineDetonationsPerMine}", { breakdown = "MineDetonationsPerMine" }, { modName = "MineExtraUses", cfg = "skill" }, }, },
+	{ label = "Re-armed Detonations", haveOutput = "MineReusedRate", { format = "{3:output:MineReusedRate}/s", { breakdown = "MineReusedRate" }, }, },
 	{ label = "Auto Detonate Attempts", haveOutput = "MineAutomationTriggerRate", { format = "{3:output:MineAutomationTriggerRate}/s", { breakdown = "MineAutomationTriggerRate" }, }, },
 	{ label = "Avg. Proj. / Mine", haveOutput = "MineSequenceAverageProjectiles", { format = "{3:output:MineSequenceAverageProjectiles}", { breakdown = "MineSequenceAverageProjectiles" }, }, },
 	{ label = "Detonation Time", haveOutput = "MineDetonationTime", { format = "{3:output:MineDetonationTime}s", { breakdown = "MineDetonationTime" }, { modName = "MineDetonationSpeed", cfg = "skill" }, }, },

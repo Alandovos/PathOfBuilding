@@ -105,8 +105,20 @@
         Throws use the calculated average mines per throw, carrying fractional extra mines into later batches. The active mine limit caps the available pool.
         Detonation timers round up to server ticks, and existing sequences act before new triggers on ties; a sequence ends when its next attempt finds no available mine.
         These event-ordering assumptions are not verified against GGG's runtime. Sequences still active at 30 seconds are truncated, so this is a finite-window estimate, not an exact steady-state or preloaded burst calculation.
-        Mine expiry, resource availability, re-arming, enemy movement, and projectile travel time are not simulated. Calcs shows overlap, per-mine projectiles, sequence timing, rate limits, and expected sequence hit damage.
+        The pool tracks individual mines, their original expiry, remaining uses and re-arm availability. New throws displace the oldest mines at the active mine limit, including re-arming mines.
+        Guaranteed extra detonations (`mine_extra_uses`, including Tremor Rod and Reliquarian's Foulborn Tremor Rod) re-use the same mine after its exported cast time,
+        modified by cast speed but not the player's action speed. Re-arming does not refresh the exported five-second Pyroclast lifetime; mine-duration modifiers apply.
+        A chain selects the oldest eligible mine other than its immediately preceding mine. Re-arming merely makes the mine available: another sequence attempt or Detonate Mines action must detonate it.
+        With extra uses and manual detonation, a server-tick simulation follows the preloaded batch, without continued throws, until its original expiry or 30 seconds.
+        After a chain ends, it retries Detonate Mines at the action's base cooldown; this is a restart assumption, not a simulation of player input.
+        Manual throughput is limited by both the sampled batch timing and the throw rate multiplied by observed detonations per physical mine, rather than blindly doubling damage or supply.
+        Export data does not implement the engine's re-arm/chain rules. Community reports describe an additional refractory period, but no verified duration is available; none is invented here.
+        Oldest-first selection, chain eligibility, simultaneous-event ordering and the cast-time-only re-arm gate are estimates, not verified reproductions of GGG's runtime.
+        Chance-based extra detonations, Skitterbot-triggered detonations, resource availability, enemy movement, and projectile travel time are not simulated.
+        Calcs shows overlap, per-detonation projectiles, re-arm time, observed detonations per thrown/preloaded mine, reused-detonation rate, sequence timing, rate limits, and expected sequence hit damage.
         References: [GGG 3.27 patch notes](https://www.pathofexile.com/forum/view-thread/3869068), [mine detonation mechanics](https://www.poewiki.net/wiki/Mine#Detonating_mines), [Detonate Mines and Automation](https://www.poewiki.net/wiki/Detonate_Mines).
+        Re-arming references: [Mark_GGG's explanation](https://www.pathofexile.com/forum/view-thread/1591919/filter-account-type/staff), [PoE Wiki Tremor Rod](https://www.poewiki.net/wiki/Tremor_Rod),
+        [PoEDB's raw `mine_extra_uses` modifier](https://poedb.tw/us/Tremor_Rod), [Pyroclast's cast time and mine lifetime](https://poedb.tw/us/Pyroclast_Mine).
     * **CalcPerform.lua**
     * **Calcs.lua**
         Loads other calcs modules.
