@@ -140,16 +140,16 @@ end
 
 function TreeOptimizer:Metrics()
 	local mode = TreeOptimizer.GetConstraintMode(self.constraints.castingHeadroom)
-	local output = self.calculate({ spec = self.spec, castingHeadroom = mode ~= 100 and mode ~= "NONE" })
+	local output = self.calculate({ spec = self.spec, castingHeadroom = mode ~= 100 and mode ~= "NONE", survivability = true })
 	local dps = output[self.dpsStat]
 	if self.dpsStat == "CombinedDPS" and output.Minion then
 		dps = output.Minion.CombinedDPS
 	end
-	local ehp = output.TotalEHP
-	if not validMetric(dps) or not validMetric(ehp) then
+	local ehp = output.ConfiguredSurvivalScore
+	if not validMetric(dps) or not validMetric(ehp) or not validMetric(output.ConfiguredSurvivalTime) then
 		return nil
 	end
-	return { dps = dps, ehp = ehp }, output
+	return { dps = dps, ehp = ehp, survivalTime = output.ConfiguredSurvivalTime }, output
 end
 
 function TreeOptimizer.GetConstraintMode(value)
@@ -290,7 +290,7 @@ function TreeOptimizer:Score(metrics)
 	elseif self.goal == "EHP" then
 		return metrics.dps >= self.base.dps * minimumMetricRatio and metrics.ehp / self.base.ehp or -math.huge
 	end
-	-- Log ratios give DPS and EHP equal relative weight without multiplying huge outputs.
+	-- Keep the EHP goal key, but give DPS and recovery-aware survival equal relative weight.
 	return math.log(metrics.dps / self.base.dps) + math.log(metrics.ehp / self.base.ehp)
 end
 
@@ -302,7 +302,7 @@ function TreeOptimizer:Evaluate(seen)
 	seen[key] = true
 	local metrics, output = self:Metrics()
 	self.tested = self.tested + 1
-	local failure = not metrics and "DPS or EHP is not finite." or self:ConstraintFailure(output)
+	local failure = not metrics and "DPS or configured survival is not finite." or self:ConstraintFailure(output)
 	if metrics and not failure then
 		local score = self:Score(metrics)
 		if score > self.bestScore + 1e-9 then
@@ -321,8 +321,8 @@ end
 
 function TreeOptimizer:Run()
 	local metrics, output = self:Metrics()
-	self.base = assert(metrics, "Optimizer requires finite DPS and EHP. Check the build configuration.")
-	assert(self.base.dps > 0 and self.base.ehp > 0, "Optimizer requires positive DPS and EHP. Select a damaging skill and check the enemy configuration.")
+	self.base = assert(metrics, "Optimizer requires finite DPS and configured survival. Check the build configuration.")
+	assert(self.base.dps > 0 and self.base.ehp > 0, "Optimizer requires positive DPS and configured survival. Select a damaging skill and check the enemy configuration.")
 	self:SetTargets(output)
 	self.initialFailure = self:ConstraintFailure(output) or (not self:IsValid() and "Passive allocation or mastery selection is invalid.")
 	self.bestFeasible = not self.initialFailure

@@ -64,9 +64,26 @@ Ctrl + Alt + RMB	Block/unblock a passive for the tree optimizer (red X marker)
 Optimize Tree:
 
 Use "Optimize Tree" at the bottom of the Tree tab after loading a character.
-Choose balanced DPS/EHP, maximize DPS, or maximize EHP, then press Start.
+Choose balanced DPS/survival, maximize DPS, or configured survival, then press Start.
 Choose Full DPS to optimize skills included in Full DPS, or selected skill DPS for the current skill/minion.
-Balanced maximizes the product of relative DPS and EHP; it may sacrifice one to improve the other.
+Balanced maximizes the product of relative DPS and configured survival score; it may sacrifice one to improve the other.
+Configured survival replaces hit-only EHP in the optimizer, not elsewhere in PoB.
+It runs a 30-second benchmark using configured enemy damage, attack/cast time and mitigation.
+The score integrates expected time alive weighted by remaining usable Life/Mana/ES buffer;
+it is not EHP or literal seconds until death. Mean time alive is reported separately, capped at 30 seconds.
+Recovery includes calculated player regeneration, capped/ramping leech and on-hit gains from the selected
+skill and enabled triggers, recoup, recharge, and block/suppression recovery. Mine/proxy leech is not
+assumed to heal the player. Recurring skill spending, temporary mine reservation and build degeneration
+are included, along with native averaged enemy-ailment degeneration. Enemy DoT uses DoT conversion/mitigation
+and bypasses hit-only buffers and loss prevention.
+Complete hit outcomes are branched for avoidance, block and suppression; lethal hits cannot be healed
+after death. Probability states are deterministically compressed to 16 nearby resource states.
+This is an estimate: attack/spell Average mode is a mixed profile; avoidance rolls are independent.
+Configured buffs and offensive rates remain active. Guard, aegis and ally buffers are initial snapshots,
+not timed recasts/resummons. Flask availability, on-kill healing, damage bursts from multiple enemies,
+dynamic leech conversions and changes to offensive cadence during combat are not scheduled.
+Energy shield recharge is conservatively interrupted by damage/spending; special uninterrupted-recharge
+effects are not simulated. Strong builds can tie at the 30-second ceiling; this is not infinite survival.
 Single-metric goals allow up to 0.5% loss in the other metric from its starting value.
 The search exchanges connected branches up to the selected swap size, using the same allocated point count.
 Mastery allocations and selected effects are optimized, without selecting duplicate effects.

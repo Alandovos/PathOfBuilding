@@ -18,6 +18,7 @@ require("Modules.CalcPerform")
 require("Modules.CalcActiveSkill")
 require("Modules.CalcDefence")
 require("Modules.CalcOffence")
+require("Modules.CalcSurvival")
 require("Modules.CalcTriggers")
 require("Modules.CalcMirages")
 
@@ -82,6 +83,7 @@ end
 ---@field conditions string[]?
 ---@field extraJewelFuncs ModList?
 ---@field castingHeadroom boolean?
+---@field survivability boolean?
 
 -- A conservative burst allowance plus an indefinite, full-cadence recovery check.
 function calcs.manaCastingHeadroom(skills, pool, recovery, reservation)
@@ -114,11 +116,10 @@ function calcs.manaCastingHeadroom(skills, pool, recovery, reservation)
 	}
 end
 
-function calcs.calcCastingHeadroom(env)
+local function evaluatedPlayerSkills(env)
 	local mainSkill = env.player.mainSkill
 	local output = env.player.output
 	local skills, seen = { }, { }
-	local unsupported
 	for _, skill in ipairs(env.player.activeSkillList) do
 		local uuid = cacheSkillUUID(skill, env)
 		if not skill.skillFlags.disable and not seen[uuid] then
@@ -135,21 +136,36 @@ function calcs.calcCastingHeadroom(env)
 				skillOutput = entry.Env.player.output
 			end
 			if not evaluated.skillFlags.disable then
-				assert(type(skillOutput.ManaCastingCost) == "number" and type(skillOutput.ManaFullRateCost) == "number",
-					"Missing calculated mana costs for "..skill.activeEffect.grantedEffect.name)
-				if (skillOutput.ESCost or 0) > 0 or env.player.modDB:Flag(nil, "EnergyShieldProtectsMana") and (skillOutput.ManaCastingCost > 0 or skillOutput.ManaCastingUpkeep > 0) then
-					unsupported = "ES payment is unsupported."
-				end
 				t_insert(skills, {
-					cost = skillOutput.ManaCastingCost,
-					upkeep = skillOutput.ManaCastingUpkeep,
-					sustained = skillOutput.ManaFullRateCost,
+					skill = evaluated, output = skillOutput,
 					recurring = skill == mainSkill or evaluated.skillData.triggered,
-					movement = evaluated.skillTypes[SkillType.Movement] or evaluated.skillTypes[SkillType.Travel],
-					guard = evaluated.skillTypes[SkillType.Guard],
 				})
 			end
 		end
+	end
+	return skills
+end
+
+function calcs.calcCastingHeadroom(env, evaluatedSkills)
+	local mainSkill = env.player.mainSkill
+	local output = env.player.output
+	local skills = { }
+	local unsupported
+	for _, entry in ipairs(evaluatedSkills or evaluatedPlayerSkills(env)) do
+		local evaluated, skillOutput = entry.skill, entry.output
+		assert(type(skillOutput.ManaCastingCost) == "number" and type(skillOutput.ManaFullRateCost) == "number",
+			"Missing calculated mana costs for "..evaluated.activeEffect.grantedEffect.name)
+		if (skillOutput.ESCost or 0) > 0 or env.player.modDB:Flag(nil, "EnergyShieldProtectsMana") and (skillOutput.ManaCastingCost > 0 or skillOutput.ManaCastingUpkeep > 0) then
+			unsupported = "ES payment is unsupported."
+		end
+		t_insert(skills, {
+			cost = skillOutput.ManaCastingCost,
+			upkeep = skillOutput.ManaCastingUpkeep,
+			sustained = skillOutput.ManaFullRateCost,
+			recurring = entry.recurring,
+			movement = evaluated.skillTypes[SkillType.Movement] or evaluated.skillTypes[SkillType.Travel],
+			guard = evaluated.skillTypes[SkillType.Guard],
+		})
 	end
 	local pool = output.ManaUnreserved
 	local reservation = 0
@@ -206,8 +222,12 @@ function calcs.getMiscCalculator(build)
 			env.player.output.FullDPS = fullDPS.combinedDPS
 			env.player.output.FullDotDPS = fullDPS.TotalDotDPS
 		end
-		if override and override.castingHeadroom then
-			calcs.calcCastingHeadroom(env)
+		if override and (override.castingHeadroom or override.survivability) then
+			local skills = evaluatedPlayerSkills(env)
+			calcs.calcCastingHeadroom(env, skills)
+			if override.survivability then
+				calcs.calcSurvival(env, skills)
+			end
 		end
 		return env.player.output
 	end, env.player.output

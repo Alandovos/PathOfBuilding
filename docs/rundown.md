@@ -121,6 +121,17 @@
         Fully calculated candidate-local costs/rates are used, including percent-mana costs and every-second-use refunds.
         Each ratio is protected independently; 0% allows 0.5% starting-value tolerance but requires ratios of at least 1.
         All optimizer reduction sliders default to 0%. Unsafe starts are reported; positive reductions can relax the budget.
+        The optimizer scores "Configured survival" instead of legacy `TotalEHP`; ordinary PoB EHP is unchanged.
+        A 30-second recovery-aware benchmark integrates survival probability times remaining usable Life/Mana/ES buffer.
+        Mean time alive is reported separately and is capped by the benchmark, not a promise of infinite survival.
+        It branches complete configured hits for avoidance/block/suppression, then uses native damage-to-pool routing.
+        Regeneration, calculated player leech/on-hit gains from recurring skills, recharge, recoup and delayed life loss
+        are integrated between attacks, alongside recurring spending and native enemy/build degeneration.
+        Enemy DoT uses its own conversion table and bypasses hit-only pools/prevention; mine reservation reduces usable mana.
+        States are deterministically compressed to 16 nearby buffers. Average-category mitigation and independent
+        avoidance rolls are approximations. Configured buffs/offensive rates stay active; guards, aegis and allies
+        are initial snapshots. Flask availability, on-kill healing, recasts/resummons, dynamic leech conversion,
+        uninterrupted-recharge exceptions, multi-enemy bursts and combat-driven offensive starvation are not scheduled.
         The check assumes configured trigger rates and regeneration, not timed flasks, hit-based resource events or repeated manual utility spam.
         It creates no in-game protected reserve. Life/ES payment is not guaranteed; ES payment and unsupported mine timing are explicitly reported.
         Calcs reports the time-weighted average physical mine population after tick events and its peak after throws but before same-tick detonations, including mines waiting to re-arm.

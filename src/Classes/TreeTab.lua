@@ -671,14 +671,21 @@ function TreeTabClass:OpenOptimizerPopup()
 	local optimizer
 	local source = self.build.spec
 	local goals = {
-		{ label = "Balanced DPS and EHP", value = "BALANCED" },
-		{ label = "DPS, up to 0.5% EHP loss", value = "DPS" },
-		{ label = "EHP, up to 0.5% DPS loss", value = "EHP" },
+		{ label = "Balanced DPS and survival", value = "BALANCED" },
+		{ label = "DPS, up to 0.5% survival loss", value = "DPS" },
+		{ label = "Configured survival, up to 0.5% DPS loss", value = "EHP" },
 	}
 	controls.info = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 20, 0, 14 },
 		"^7Reallocates points, masteries and ascendancy options; saves a new tree.\nAscendancy selections, runegrafts and occupied jewels stay fixed.\nAlt + right-click: require; Ctrl + Alt + right-click: block/unblock.\nMana/life reservation and item/gem attribute requirements are always enforced.")
 	controls.goalLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 93, 0, 16 }, "^7Goal:")
 	controls.goal = new("DropDownControl"):DropDownControl({ "TOPLEFT", nil, "TOPLEFT" }, { 140, 90, 300, 20 }, goals)
+	controls.goal.tooltipFunc = function(tooltip)
+		tooltip:Clear()
+		tooltip:AddLine(14, "Configured survival is a 30-second enemy-pressure benchmark, not PoB's hit-only EHP.")
+		tooltip:AddLine(14, "Scores expected time alive weighted by remaining usable Life/Mana/ES buffer. More recovery helps without making lethal hits survivable.")
+		tooltip:AddLine(14, "Uses enemy damage/type/cadence, avoidance, block, suppression, regeneration, player leech/on-hit recovery, recoup, recharge, degeneration and recurring skill costs.")
+		tooltip:AddLine(14, "Deterministic, bounded probability-state approximation. Configured buffs and offensive rates stay active; guard/aegis/ally pools are initial snapshots. Not a guarantee against every combat pattern.")
+	end
 	controls.depthLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 480, 93, 0, 16 }, "^7Max swap:")
 	controls.depth = new("DropDownControl"):DropDownControl({ "TOPLEFT", nil, "TOPLEFT" }, { 600, 90, 100, 20 }, { 1, 3, 5, 10 })
 	controls.depth.selIndex = 2
@@ -731,21 +738,22 @@ function TreeTabClass:OpenOptimizerPopup()
 	controls.maxHit.labelRight = true
 	controls.status = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 386, 0, 14 }, function()
 		if not optimizer then
-			return "^7Ready. Balanced maximizes DPS x EHP; either metric may fall.\nSingle-metric goals allow up to 0.5% loss in the other starting metric.\nOnly feasible results can be applied. Search is local, not a global optimum."
+			return "^7Ready. Balanced maximizes DPS x survival score; either may fall.\nRecovery-aware 30-second benchmark uses configured enemy pressure.\nSingle-metric goals allow up to 0.5% loss in the other starting metric.\nOnly feasible results can be applied. Search is local, not global."
 		elseif optimizer.failed then
 			return "^1Search failed. Original tree unchanged; see the error message."
 		elseif not optimizer.base then
-			return optimizer.done and "^7Stopped before initial calculation; no changes made." or "^7Calculating starting DPS and EHP..."
+			return optimizer.done and "^7Stopped before initial calculation; no changes made." or "^7Calculating starting DPS and configured survival..."
 		end
 		local status = optimizer.done and (optimizer.stopped and "Stopped" or "Finished (local optimum)") or "Searching"
 		local metrics = optimizer.bestMetrics
 		if optimizer.done and not optimizer.bestFeasible then
 			status = "Finished: no feasible tree found"
 		end
-		return s_format("^7%s | Pass %d, branch %d/%d\nTested %d trees; rejected %d infeasible/non-finite\nDPS: %.6g -> %.6g (%+.4g%%)\nEHP: %.6g -> %.6g (%+.4g%%)%s",
+		return s_format("^7%s | Pass %d, branch %d/%d\nTested %d trees; rejected %d infeasible/non-finite\nDPS: %.6g -> %.6g (%+.4g%%)\nSurvival score: %.6g -> %.6g (%+.4g%%)\nMean time alive (30s test): %.2f -> %.2f s%s",
 			status, optimizer.pass, optimizer.branch or 0, optimizer.branches or 0, optimizer.tested, optimizer.rejected,
 			optimizer.base.dps, metrics.dps, (metrics.dps / optimizer.base.dps - 1) * 100,
 			optimizer.base.ehp, metrics.ehp, (metrics.ehp / optimizer.base.ehp - 1) * 100,
+			optimizer.base.survivalTime, metrics.survivalTime,
 			not optimizer.bestFeasible and ("\nUnmet: "..optimizer.initialFailure) or "")
 	end)
 	controls.warning = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 474, 0, 14 },
@@ -785,7 +793,7 @@ function TreeTabClass:OpenOptimizerPopup()
 	controls.save = new("ButtonControl"):ButtonControl({ "TOPLEFT", nil, "TOPLEFT" }, { 250, 542, 300, 24 }, "Use Best as New Tree", function()
 		optimizer:Stop()
 		local metrics, output = optimizer:Metrics()
-		local failure = not metrics and "DPS or EHP is not finite."
+		local failure = not metrics and "DPS or configured survival is not finite."
 			or not optimizer:IsValid() and "Passive allocation or mastery selection is invalid."
 			or optimizer:ConstraintFailure(output)
 		if failure then

@@ -3,7 +3,7 @@ describe("Tree optimizer", function()
 	local first, alternative
 	local function feasibleOutput(values)
 		local output = {
-			CombinedDPS = 100, TotalEHP = 100,
+			CombinedDPS = 100, TotalEHP = 100, ConfiguredSurvivalScore = 100, ConfiguredSurvivalTime = 30,
 			ManaUnreserved = 100, LifeUnreserved = 100,
 			ManaCastingCapacityRatio = 2, ManaCastingSustainRatio = 2,
 			ExtraPoints = 0,
@@ -65,7 +65,7 @@ describe("Tree optimizer", function()
 		local optimizer = build.treeTab:CreateTreeOptimizer(goal, 1, "CombinedDPS")
 		optimizer.calculate = function(override)
 			local chosen = override.spec.allocNodes[alternative.id]
-			return feasibleOutput({ CombinedDPS = chosen and dps or 100, TotalEHP = chosen and ehp or 100 })
+			return feasibleOutput({ CombinedDPS = chosen and dps or 100, ConfiguredSurvivalScore = chosen and ehp or 100 })
 		end
 		return finish(optimizer)
 	end
@@ -544,7 +544,7 @@ Implicits: 0
 		local calculate, baseline = build.calcsTab:GetMiscCalculator()
 		local optimizer = build.treeTab:CreateTreeOptimizer("EHP", 1, "CombinedDPS")
 		optimizer.calculate = function(override)
-			return feasibleOutput({ TotalEHP = override.spec.masterySelections[mastery.id] == targetEffect and 200 or 100 })
+			return feasibleOutput({ ConfiguredSurvivalScore = override.spec.masterySelections[mastery.id] == targetEffect and 200 or 100 })
 		end
 		finish(optimizer)
 		assert(optimizer.spec.masterySelections[mastery.id] == targetEffect)
@@ -916,9 +916,25 @@ Adds Hollow Palm Technique]])
 			return feasibleOutput({ CombinedDPS = 0 })
 		end
 		local ok, err = coroutine.resume(optimizer.worker)
-		assert(not ok and err:match("positive DPS and EHP"))
+		assert(not ok and err:match("positive DPS and configured survival"))
 		optimizer = search("BALANCED", math.huge, 100)
 		assert(optimizer.rejected > 0 and optimizer.improvements == 0)
+	end)
+
+	it("optimizes configured survival rather than hit-only EHP and requires its output", function()
+		local optimizer = build.treeTab:CreateTreeOptimizer("EHP", 1, "CombinedDPS")
+		optimizer.calculate = function(override)
+			assert(override.survivability)
+			local changed = override.spec.allocNodes[alternative.id]
+			return feasibleOutput({ TotalEHP = changed and 50 or 100, ConfiguredSurvivalScore = changed and 200 or 100 })
+		end
+		assert(finish(optimizer).bestMetrics.ehp == 200)
+		optimizer.calculate = function()
+			local output = feasibleOutput()
+			output.ConfiguredSurvivalScore = nil
+			return output
+		end
+		assert(optimizer:Metrics() == nil)
 	end)
 
 	it("persists locks and blocks through save/load, copying and undo states", function()

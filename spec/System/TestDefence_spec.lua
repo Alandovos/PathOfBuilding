@@ -1,10 +1,185 @@
 describe("TestDefence", function()
+	local calcs = require("Modules.CalcBase")
 	before_each(function()
 		newBuild()
 	end)
 
 	teardown(function()
 		-- newBuild() takes care of resetting everything in setup()
+	end)
+
+	local function survivalFixture()
+		local original = build.calcsTab.mainEnv.player
+		local actor = { output = copyTable(original.output, true), modDB = original.modDB }
+		actor.output.Life = 1000
+		actor.output.Mana = 1000
+		local profile = {
+			caps = { Life = 1000, Mana = 0, EnergyShield = 0 },
+			damage = { Physical = 600 }, interval = 1,
+			regen = { Life = 0, Mana = 0, EnergyShield = 0 },
+			spending = { Life = 0, Mana = 0, EnergyShield = 0 },
+			leechCap = { Life = 0, Mana = 0, EnergyShield = 0 }, leech = { }, overleech = { },
+			recoupTime = { Life = 4, Mana = 4, EnergyShield = 4 },
+			belowHalfLoss = 0, missingLife = 0, missingMana = 0,
+			degen = { }, outcomes = { { probability = 1, damage = { Physical = 600 }, gain = { Life = 0, Mana = 0, EnergyShield = 0 } } },
+		}
+		return actor, profile
+	end
+
+	it("scores recovery between configured hits and distinguishes sustaining builds", function()
+		local actor, profile = survivalFixture()
+		local baseline = calcs.simulateSurvival(actor, profile)
+		profile.regen.Life = 300
+		local recovering = calcs.simulateSurvival(actor, profile)
+		profile.interval = 0.5
+		local fasterEnemy = calcs.simulateSurvival(actor, profile)
+		profile.interval, profile.regen.Life = 1, 600
+		local sustained = calcs.simulateSurvival(actor, profile)
+		profile.regen.Life = 1200
+		local safer = calcs.simulateSurvival(actor, profile)
+		assert(recovering.ConfiguredSurvivalScore > baseline.ConfiguredSurvivalScore)
+		assert(recovering.ConfiguredSurvivalTime > baseline.ConfiguredSurvivalTime)
+		assert(fasterEnemy.ConfiguredSurvivalTime < recovering.ConfiguredSurvivalTime)
+		assert(math.abs(sustained.ConfiguredSurvivalTime - 30) < 1e-6)
+		assert(safer.ConfiguredSurvivalScore > sustained.ConfiguredSurvivalScore)
+		assert(safer.ConfiguredSurvivalScore <= 30 + 1e-6)
+	end)
+
+	it("includes ramping player leech without healing after a lethal hit", function()
+		local actor, profile = survivalFixture()
+		local baseline = calcs.simulateSurvival(actor, profile)
+		profile.leech = { {
+			Life = { normal = 600, instant = 0, duration = 1 },
+			Mana = { normal = 0, instant = 0, duration = 0 },
+			EnergyShield = { normal = 0, instant = 0, duration = 0 },
+		} }
+		profile.leechCap.Life = 600
+		assert(calcs.simulateSurvival(actor, profile).ConfiguredSurvivalScore > baseline.ConfiguredSurvivalScore)
+		profile.outcomes[1].damage.Physical = 1100
+		profile.regen.Life = 100000
+		local lethal = calcs.simulateSurvival(actor, profile)
+		assert(math.abs(lethal.ConfiguredSurvivalTime - 1) < 1e-6)
+		assert(lethal.ConfiguredSurvivalChance == 0)
+	end)
+
+	it("branches lethal hits instead of averaging block into harmless damage", function()
+		local actor, profile = survivalFixture()
+		profile.regen.Life = 100000
+		profile.outcomes[1].damage.Physical = 1100
+		profile.outcomes[1].probability = 0.25
+		profile.outcomes[2] = { probability = 0.75, damage = { }, gain = { Life = 0, Mana = 0, EnergyShield = 0 } }
+		local result = calcs.simulateSurvival(actor, profile)
+		assert(math.abs(result.ConfiguredSurvivalTime - (1 - 0.75 ^ 30) / 0.25) < 1e-6)
+		assert(math.abs(result.ConfiguredSurvivalChance - 100 * 0.75 ^ 30) < 1e-6)
+	end)
+
+	it("routes continuous degeneration without consuming hit-only buffers", function()
+		local actor, profile = survivalFixture()
+		profile.dot, profile.hasDegen = true, true
+		profile.damage, profile.degen = { Physical = 500 }, { Physical = 500 }
+		actor.output.Ward = 10000
+		actor.output.sharedGuardAbsorb = 10000
+		actor.output.sharedGuardAbsorbRate = 100
+		actor.output.sharedAegis = 10000
+		local dying = calcs.simulateSurvival(actor, profile)
+		assert(math.abs(dying.ConfiguredSurvivalTime - 2) < 0.04, "DoT time alive: "..dying.ConfiguredSurvivalTime)
+		profile.caps.Life = 1
+		profile.regen.Life = 500
+		local balanced = calcs.simulateSurvival(actor, profile)
+		assert(math.abs(balanced.ConfiguredSurvivalScore - 30) < 1e-6)
+		local pools = calcs.reducePoolsByDamage({
+			Life = 1000, Mana = 0, EnergyShield = 0, Ward = 100, WardActiveChance = 1,
+			Guard = { shared = 100, Physical = 0 }, Aegis = { shared = 100, sharedElemental = 0, Physical = 0 },
+		}, { Physical = 50 }, actor, true)
+		assert(pools.Life == 950 and pools.Ward == 100 and pools.Guard.shared == 100 and pools.Aegis.shared == 100)
+	end)
+
+	it("accounts for mana and shield recovery and recurring life spending", function()
+		local actor, profile = survivalFixture()
+		actor.output.sharedMindOverMatter = 40
+		profile.caps.Mana, profile.caps.EnergyShield = 1000, 1000
+		local baseline = calcs.simulateSurvival(actor, profile)
+		profile.regen.Mana, profile.regen.EnergyShield = 500, 500
+		local recovering = calcs.simulateSurvival(actor, profile)
+		assert(recovering.ConfiguredSurvivalTime > baseline.ConfiguredSurvivalTime)
+		assert(recovering.ConfiguredSurvivalScore > baseline.ConfiguredSurvivalScore)
+		profile.spending.Life = 1000
+		assert(calcs.simulateSurvival(actor, profile).ConfiguredSurvivalTime < baseline.ConfiguredSurvivalTime)
+		actor, profile = survivalFixture()
+		actor.output.sharedMindOverMatter = 40
+		profile.dot, profile.hasDegen = true, true
+		profile.damage, profile.degen = { Physical = 500 }, { Physical = 500 }
+		baseline = calcs.simulateSurvival(actor, profile)
+		profile.regen.Mana, profile.regen.EnergyShield = 10000, 10000
+		local unavailablePools = calcs.simulateSurvival(actor, profile)
+		assert(unavailablePools.ConfiguredSurvivalTime == baseline.ConfiguredSurvivalTime)
+		assert(unavailablePools.ConfiguredSurvivalScore == baseline.ConfiguredSurvivalScore)
+	end)
+
+	it("schedules recoup after hits rather than treating it as starting regeneration", function()
+		local actor, profile = survivalFixture()
+		profile.damage.Physical, profile.outcomes[1].damage.Physical = 300, 300
+		local baseline = calcs.simulateSurvival(actor, profile)
+		actor.output.LifeRecoup = 100
+		local recouping = calcs.simulateSurvival(actor, profile)
+		assert(recouping.ConfiguredSurvivalTime > baseline.ConfiguredSurvivalTime)
+		assert(recouping.ConfiguredSurvivalScore > baseline.ConfiguredSurvivalScore)
+	end)
+
+	it("calculates candidate-local survival without changing legacy EHP", function()
+		build.configTab.input.enemyDamageType = "Melee"
+		build.configTab.input.enemySpeed = 1000
+		for _, damageType in ipairs({ "Physical", "Lightning", "Cold", "Fire", "Chaos" }) do
+			build.configTab.input["enemy"..damageType.."Damage"] = damageType == "Physical" and 1000 or 0
+		end
+		build.configTab.input.customMods = "+5000 to maximum Life"
+		build.configTab:BuildModList()
+		runCallback("OnFrame")
+		local calculate = calcs.getMiscCalculator(build)
+		local baseline = calculate({ survivability = true })
+		local ehp, score = baseline.TotalEHP, baseline.ConfiguredSurvivalScore
+		build.configTab.input.customMods = "+5000 to maximum Life\nRegenerate 1000 Life per second"
+		build.configTab:BuildModList()
+		runCallback("OnFrame")
+		calculate = calcs.getMiscCalculator(build)
+		local recovering = calculate({ survivability = true })
+		assert(recovering.TotalEHP == ehp)
+		assert(recovering.ConfiguredSurvivalScore > score)
+	end)
+
+	it("interrupts recharge under fast hits and schedules delayed life loss", function()
+		local actor, profile = survivalFixture()
+		profile.caps.EnergyShield = 1000
+		profile.interval = 3
+		local baseline = calcs.simulateSurvival(actor, profile)
+		actor.output.EnergyShieldRecharge = 1000
+		actor.output.EnergyShieldRechargeDelay = 1
+		local recharging = calcs.simulateSurvival(actor, profile)
+		profile.interval = 0.5
+		local interrupted = calcs.simulateSurvival(actor, profile)
+		assert(recharging.ConfiguredSurvivalTime > baseline.ConfiguredSurvivalTime)
+		assert(interrupted.ConfiguredSurvivalTime < recharging.ConfiguredSurvivalTime)
+		actor, profile = survivalFixture()
+		profile.damage.Physical, profile.outcomes[1].damage.Physical = 400, 400
+		baseline = calcs.simulateSurvival(actor, profile)
+		actor.output.preventedLifeLoss, actor.output.preventedLifeLossTotal = 25, 25
+		local delayed = calcs.simulateSurvival(actor, profile)
+		assert(delayed.ConfiguredSurvivalTime > baseline.ConfiguredSurvivalTime)
+		assert(delayed.ConfiguredSurvivalTime < 4)
+	end)
+
+	it("uses DoT-only conversion in the survival benchmark", function()
+		build.configTab.input.enemyDamageType = "DamageOverTime"
+		for _, damageType in ipairs({ "Physical", "Lightning", "Cold", "Fire", "Chaos" }) do
+			build.configTab.input["enemy"..damageType.."Damage"] = damageType == "Physical" and 1000 or 0
+		end
+		build.configTab.input.customMods = "+10000 to maximum Life\n+300% to Chaos Resistance\n10% of Physical Damage taken as Chaos Damage\n10% of Physical Damage over Time taken as Chaos Damage\n20% of Physical Damage from Hits taken as Chaos Damage"
+		build.configTab:BuildModList()
+		runCallback("OnFrame")
+		local calculate = calcs.getMiscCalculator(build)
+		local output = calculate({ survivability = true })
+		local expected = output.LifeRecoverable / (output.TotalDegen - output.LifeRegenRecovery)
+		assert(math.abs(output.ConfiguredSurvivalTime - expected) <= 1 / data.misc.ServerTickRate + 1e-6)
 	end)
 
 	it("converts physical damage over time independently of hit damage", function()
