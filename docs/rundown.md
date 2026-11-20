@@ -121,7 +121,7 @@
         Fully calculated candidate-local costs/rates are used, including percent-mana costs and every-second-use refunds.
         Each ratio is protected independently; 0% allows 0.5% starting-value tolerance but requires ratios of at least 1.
         Enabled optimizer reduction sliders default to 0%. Unsafe starts are reported; positive reductions can relax the budget.
-        Overview defaults to "Damage AND resilience - improve both", build-aware safety and four defensive questions.
+        Overview defaults to "Damage AND survival - improve both", build-aware safety and four defensive questions.
         Advanced controls expose damage metric, swap size, floor enable/disable checkboxes and allowable reductions.
         Elemental/chaos resistance, mana casting budgets and maximum-hit protection default on; chaos is unlocked for CI-like immunity.
         Block floors default on at >=50% attack/spell block or with block recovery; suppression at >=50%;
@@ -131,11 +131,13 @@
         native maximum-roll boss skills (not Memory Game), and a clearly synthetic Feared-style mixed stress test.
         Isolated ConfigTabs preserve live Configuration and player conditions. Built-in profiles replace incoming-hit
         inputs and the managed synthetic DoT block; saved profiles use their own settings. Applying a tree does not switch Configuration.
-        The optimizer scores "Pressure resilience" (internally Configured survival) instead of legacy `TotalEHP`; ordinary PoB EHP is unchanged.
+        The optimizer's defensive objective is simulated mean time alive (`ConfiguredSurvivalTime`), not legacy `TotalEHP`.
+        No goal may reduce starting time alive. Survival mode maximizes time with at most 0.5% starting-DPS loss.
+        Damage mode maximizes DPS; equal scores favor longer time alive, then buffer margin.
         Four-question cards are max-hit/recovery snapshots, not boss-hit certification, two-hit tests, timed escape or uptime audits.
-        Balanced accepts only improvements to both starting DPS and configured survival score, ranked by their relative product.
-        A 30-second recovery-aware benchmark integrates survival probability times remaining usable Life/Mana/ES buffer.
-        Mean time alive is reported separately and is capped by the benchmark, not a promise of infinite survival.
+        Balanced requires higher DPS and time alive, ranked by relative product; equal starting time requires better buffer margin instead.
+        The previous resource-weighted score (`ConfiguredSurvivalScore`) distinguishes equal times, including at the 30-second ceiling.
+        The benchmark is not a boss-kill prediction, does not change ordinary PoB EHP and does not promise infinite survival.
         It branches complete configured hits for avoidance/block/suppression, then uses native damage-to-pool routing.
         Regeneration, calculated player leech/on-hit gains from recurring skills, recharge, recoup and delayed life loss
         are integrated between attacks, alongside recurring spending and native enemy/build degeneration.

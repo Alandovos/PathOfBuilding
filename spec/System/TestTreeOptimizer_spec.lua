@@ -61,11 +61,14 @@ describe("Tree optimizer", function()
 		return optimizer
 	end
 
-	local function search(goal, dps, ehp)
+	local function search(goal, dps, ehp, survivalTime, baselineTime)
 		local optimizer = build.treeTab:CreateTreeOptimizer(goal, 1, "CombinedDPS")
 		optimizer.calculate = function(override)
 			local chosen = override.spec.allocNodes[alternative.id]
-			return feasibleOutput({ CombinedDPS = chosen and dps or 100, ConfiguredSurvivalScore = chosen and ehp or 100 })
+			return feasibleOutput({
+				CombinedDPS = chosen and dps or 100, ConfiguredSurvivalScore = chosen and ehp or 100,
+				ConfiguredSurvivalTime = chosen and (survivalTime or 30) or (baselineTime or 30),
+			})
 		end
 		return finish(optimizer)
 	end
@@ -191,7 +194,7 @@ Added Small Passive Skills grant: 12% increased Fire Damage
 		error("Reliquarian relic choice is missing")
 	end
 
-	it("requires both DPS and configured survival to improve in Balanced mode on a separate tree", function()
+	it("requires damage and survival improvement, using buffer margin when time is tied at the ceiling", function()
 		local source = build.spec
 		assert(search("BALANCED", 150, 80).improvements == 0)
 		assert(search("BALANCED", 80, 150).improvements == 0)
@@ -205,17 +208,36 @@ Added Small Passive Skills grant: 12% increased Fire Damage
 		assert(optimizer.tested > 0)
 	end)
 
-	it("allows at most 0.5% EHP loss in DPS mode and DPS loss in EHP mode", function()
-		assert(search("DPS", 150, 99.6).bestMetrics.ehp == 99.6)
-		assert(search("EHP", 99.6, 150).bestMetrics.dps == 99.6)
-		assert(search("DPS", 150, 99.5).bestMetrics.ehp == 99.5)
-		assert(search("EHP", 99.5, 150).bestMetrics.dps == 99.5)
-		assert(search("DPS", 150, 99.499).improvements == 0)
-		assert(search("EHP", 99.499, 150).improvements == 0)
-		assert(search("DPS", 150, 80).improvements == 0)
-		assert(search("EHP", 80, 150).improvements == 0)
-		assert(search("DPS", 120, 110).bestMetrics.dps == 120)
-		assert(search("EHP", 110, 120).bestMetrics.ehp == 120)
+	it("preserves time alive in damage mode and limits DPS loss to 0.5% in survival mode", function()
+		assert(search("DPS", 150, 80, 10, 10).bestMetrics.dps == 150)
+		assert(search("DPS", 150, 200, 9.999, 10).improvements == 0)
+		assert(search("EHP", 99.6, 80, 12, 10).bestMetrics.dps == 99.6)
+		assert(search("EHP", 99.5, 80, 12, 10).bestMetrics.dps == 99.5)
+		assert(search("EHP", 99.499, 200, 12, 10).improvements == 0)
+		assert(search("EHP", 80, 200, 12, 10).improvements == 0)
+	end)
+
+	it("never trades shorter time alive for a higher buffer score in any goal", function()
+		for _, goal in ipairs({ "BALANCED", "DPS", "EHP" }) do
+			local optimizer = search(goal, 150, 200, 9, 10)
+			assert(optimizer.improvements == 0 and optimizer.bestMetrics.survivalTime == 10)
+		end
+	end)
+
+	it("accepts longer survival even when the resource-weighted score falls", function()
+		for _, goal in ipairs({ "BALANCED", "EHP" }) do
+			local optimizer = search(goal, 120, 80, 12, 10)
+			assert(optimizer.bestMetrics.survivalTime == 12 and optimizer.bestMetrics.ehp == 80)
+			assert(optimizer:Score({ dps = 120, ehp = 200, survivalTime = 11 }) < optimizer.bestScore)
+		end
+	end)
+
+	it("uses buffer margin only to distinguish equal survival times", function()
+		assert(search("EHP", 100, 110, 10, 10).bestMetrics.ehp == 110)
+		assert(search("EHP", 100, 90, 10, 10).improvements == 0)
+		assert(search("EHP", 100, 110, 30, 30).bestMetrics.ehp == 110)
+		assert(search("BALANCED", 120, 110, 10, 10).bestMetrics.dps == 120)
+		assert(search("BALANCED", 120, 100, 10, 10).improvements == 0)
 	end)
 
 	it("preserves locked nodes and their connecting path", function()
@@ -985,6 +1007,12 @@ Adds Hollow Palm Technique]])
 		end
 		local ok, err = coroutine.resume(optimizer.worker)
 		assert(not ok and err:match("positive DPS and configured survival"))
+		optimizer = build.treeTab:CreateTreeOptimizer("EHP", 1, "CombinedDPS")
+		optimizer.calculate = function()
+			return feasibleOutput({ ConfiguredSurvivalTime = 0 })
+		end
+		ok, err = coroutine.resume(optimizer.worker)
+		assert(not ok and err:match("configured survival time"))
 		optimizer = search("BALANCED", math.huge, 100)
 		assert(optimizer.rejected > 0 and optimizer.improvements == 0)
 	end)
@@ -1551,7 +1579,7 @@ Adds Hollow Palm Technique]])
 		popup.controls.stop:Click()
 		popup.controls.goal:SelByValue("EHP", "value")
 		popup.controls.goal.selFunc()
-		assert(popup.controls.status:GetProperty("label"):match("Ready. More resilience"))
+		assert(popup.controls.status:GetProperty("label"):match("Ready. Survive longer"))
 		popup.controls.close:Click()
 	end)
 

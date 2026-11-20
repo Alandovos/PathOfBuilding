@@ -325,18 +325,22 @@ function TreeOptimizer:ConstraintFailure(output)
 end
 
 function TreeOptimizer:Score(metrics)
+	if metrics.survivalTime < self.base.survivalTime then
+		return -math.huge
+	end
 	if self.goal == "DPS" then
-		return metrics.ehp >= self.base.ehp * minimumMetricRatio and metrics.dps / self.base.dps or -math.huge
+		return metrics.dps / self.base.dps
 	elseif self.goal == "EHP" then
-		return metrics.dps >= self.base.dps * minimumMetricRatio and metrics.ehp / self.base.ehp or -math.huge
+		return metrics.dps >= self.base.dps * minimumMetricRatio and metrics.survivalTime / self.base.survivalTime or -math.huge
 	end
 	if metrics == self.base then
 		return 0
-	elseif metrics.dps <= self.base.dps or metrics.ehp <= self.base.ehp then
+	elseif metrics.dps <= self.base.dps
+		or metrics.survivalTime == self.base.survivalTime and metrics.ehp <= self.base.ehp then
 		return -math.huge
 	end
-	-- Rank joint improvements with equal relative weight for DPS and configured survival.
-	return math.log(metrics.dps / self.base.dps) + math.log(metrics.ehp / self.base.ehp)
+	-- Buffer margin distinguishes equal survival times, including the simulation ceiling.
+	return math.log(metrics.dps / self.base.dps) + math.log(metrics.survivalTime / self.base.survivalTime)
 end
 
 function TreeOptimizer:Evaluate(seen)
@@ -350,7 +354,10 @@ function TreeOptimizer:Evaluate(seen)
 	local failure = not metrics and "DPS or configured survival is not finite." or self:ConstraintFailure(output)
 	if metrics and not failure then
 		local score = self:Score(metrics)
-		if score > self.bestScore + 1e-9 then
+		local betterTie = score > -math.huge and score == self.bestScore
+			and (metrics.survivalTime > self.bestMetrics.survivalTime
+				or metrics.survivalTime == self.bestMetrics.survivalTime and metrics.ehp > self.bestMetrics.ehp)
+		if score > self.bestScore + 1e-9 or betterTie then
 			self.best = copyTable(self.spec.allocNodes, true)
 			self.bestMasteries = copyTable(self.spec.masterySelections)
 			self.bestMetrics = metrics
@@ -367,7 +374,8 @@ end
 function TreeOptimizer:Run()
 	local metrics, output = self:Metrics()
 	self.base = assert(metrics, "Optimizer requires finite DPS and configured survival. Check the build configuration.")
-	assert(self.base.dps > 0 and self.base.ehp > 0, "Optimizer requires positive DPS and configured survival. Select a damaging skill and check the enemy configuration.")
+	assert(self.base.dps > 0 and self.base.ehp > 0 and self.base.survivalTime > 0,
+		"Optimizer requires positive DPS and configured survival time/score. Select a damaging skill and check the enemy configuration.")
 	self:SetTargets(output)
 	self.initialFailure = self:ConstraintFailure(output) or (not self:IsValid() and "Passive allocation or mastery selection is invalid.")
 	self.bestFeasible = not self.initialFailure

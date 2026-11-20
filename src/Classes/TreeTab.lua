@@ -680,9 +680,9 @@ function TreeTabClass:OpenOptimizerPopup()
 	local profileCalculate, previewOutput, profileFailure
 	local savedOptions = self.optimizerOptions or { }
 	local goals = {
-		{ label = "Damage AND resilience - improve both", value = "BALANCED" },
-		{ label = "More damage - preserve resilience within 0.5%", value = "DPS" },
-		{ label = "More resilience - preserve damage within 0.5%", value = "EHP" },
+		{ label = "Damage AND survival - improve both", value = "BALANCED" },
+		{ label = "More damage - preserve simulated time alive", value = "DPS" },
+		{ label = "Survive longer - preserve damage within 0.5%", value = "EHP" },
 	}
 	controls.info = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 20, 0, 14 },
 		"^7Find a better passive tree without replacing your original.\nClass, ascendancy selections and socketed jewels stay fixed; required/blocked nodes are respected.")
@@ -695,10 +695,11 @@ function TreeTabClass:OpenOptimizerPopup()
 	end
 	controls.goal.tooltipFunc = function(tooltip)
 		tooltip:Clear()
-		tooltip:AddLine(14, "Resilience is the recovery-aware pressure score, not PoB's hit-only EHP or boss readiness.")
-		tooltip:AddLine(14, "The default requires both damage and resilience to improve over the starting tree.")
+		tooltip:AddLine(14, "Survival means simulated mean time alive under the selected damage profile, capped at 30 seconds.")
+		tooltip:AddLine(14, "The default improves damage and time alive; if time ties, buffer margin must improve instead.")
+		tooltip:AddLine(14, "No goal may reduce time alive below the starting tree. Survive longer allows at most 0.5% DPS loss.")
 		tooltip:AddLine(14, "Recovery helps between complete hits; it cannot heal a lethal hit after death.")
-		tooltip:AddLine(14, "The score averages resource buffers and survival probability over 30 seconds; avoidance/state compression are approximations.")
+		tooltip:AddLine(14, "Buffer margin breaks ties; it cannot buy shorter survival. This is not a boss-kill prediction.")
 	end
 	local function running()
 		return optimizer and not optimizer.done and not optimizer.failed
@@ -757,7 +758,7 @@ function TreeTabClass:OpenOptimizerPopup()
 	local constraintOptions = {
 		{ key = "elementalRes", label = "Elemental resistances", tooltip = "Preserves starting effective Fire, Cold and Lightning resistance separately, not overcap. Does not fix uncapped resistance." },
 		{ key = "chaosRes", label = "Chaos resistance", tooltip = "Preserves starting effective Chaos resistance. Automatically unlocked for a 1-Life, chaos-immune build." },
-		{ key = "block", label = "Attack + spell block", tooltip = "Default: protected only at 50%+ attack/spell block, or with recovery on block.\nIncidental block remains part of resilience calculations even when this separate floor is off." },
+		{ key = "block", label = "Attack + spell block", tooltip = "Default: protected only at 50%+ attack/spell block, or with recovery on block.\nIncidental block still affects simulated survival even when this separate floor is off." },
 		{ key = "suppression", label = "Spell suppression", tooltip = "Default: protected at 50%+ suppression. At 0% allowable reduction, full suppression stays at 100%." },
 		{ key = "ailmentAvoidance", label = "Elemental ailment avoidance", tooltip = "Default: protected if any elemental ailment has full avoidance.\nAt 0% allowable reduction, complete avoidance remains complete. Applies separately to all elemental ailments." },
 		{ key = "castingHeadroom", label = "Casting resources (mana)", tooltip = "Checks burst affordability after peak temporary mine reservation and sustained full-cadence mana recovery.\nIncludes enabled triggers plus movement, guard and utility burst costs.\n0% requires both budgets to be covered, even if the starting build is unsafe.\n100% disables this optional audit. Flask timing, hit-based mana recovery and Life/ES payment are not guaranteed." },
@@ -825,7 +826,7 @@ function TreeTabClass:OpenOptimizerPopup()
 	end)
 	controls.safety.shown = basicShown
 	controls.safetyInfo = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 390, 0, 12 },
-		"^7Incidental block and incomplete avoidance are not\nlocked by default, but still count toward resilience.\nOverride any safety floor under Advanced controls.")
+		"^7Incidental block and incomplete avoidance are not\nlocked by default, but still affect survival.\nOverride any safety floor under Advanced controls.")
 	controls.safetyInfo.shown = basicShown
 	controls.questionsLabel = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 490, 236, 0, 14 }, "^7Your four questions - current snapshots")
 	controls.questionsLabel.shown = basicShown
@@ -840,7 +841,7 @@ function TreeTabClass:OpenOptimizerPopup()
 		end,
 		function()
 			local values = defences()
-			return s_format("^72. Recover before the next mistake?\nLife regen %.4g/s; player leech %.4g/s\nPressure score includes recovery; no two-hit test.", values.regen, values.leech)
+			return s_format("^72. Recover before the next mistake?\nLife regen %.4g/s; player leech %.4g/s\nSimulation includes recovery; no two-hit test.", values.regen, values.leech)
 		end,
 		function()
 			local values = defences()
@@ -859,7 +860,7 @@ function TreeTabClass:OpenOptimizerPopup()
 			return "^1Damage profile could not be calculated. Choose another profile."
 		end
 		if not optimizer then
-			return "^7Ready. "..goals[controls.goal.selIndex].label..".\nResilience includes recovery; it is not EHP or a boss-readiness certificate.\nProfile selection is search-only; your active Configuration stays unchanged."
+			return "^7Ready. "..goals[controls.goal.selIndex].label..".\nTime alive drives survival; buffer margin breaks ties. Not a boss-kill prediction.\nProfile selection is search-only; your active Configuration stays unchanged."
 		elseif optimizer.failed then
 			return "^1Search failed. Original tree unchanged; see the error message."
 		elseif not optimizer.base then
@@ -870,11 +871,11 @@ function TreeTabClass:OpenOptimizerPopup()
 		if optimizer.done and not optimizer.bestFeasible then
 			status = "Finished: no feasible tree found"
 		end
-		return s_format("^7%s | Pass %d, branch %d/%d\nTested %d trees; rejected %d infeasible/non-finite\nDamage: %.6g -> %.6g (%+.4g%%)\nPressure resilience: %.6g -> %.6g (%+.4g%%)\nMean time alive (30s test): %.2f -> %.2f s%s",
+		return s_format("^7%s | Pass %d, branch %d/%d\nTested %d trees; rejected %d infeasible/non-finite\nDamage: %.6g -> %.6g (%+.4g%%)\nMean time alive (30s test): %.2f -> %.2f s\nBuffer margin (tie-break): %.6g -> %.6g (%+.4g%%)%s",
 			status, optimizer.pass, optimizer.branch or 0, optimizer.branches or 0, optimizer.tested, optimizer.rejected,
 			optimizer.base.dps, metrics.dps, (metrics.dps / optimizer.base.dps - 1) * 100,
-			optimizer.base.ehp, metrics.ehp, (metrics.ehp / optimizer.base.ehp - 1) * 100,
 			optimizer.base.survivalTime, metrics.survivalTime,
+			optimizer.base.ehp, metrics.ehp, (metrics.ehp / optimizer.base.ehp - 1) * 100,
 			not optimizer.bestFeasible and ("\nUnmet: "..optimizer.initialFailure) or "")
 	end)
 	controls.warning = new("LabelControl"):LabelControl({ "TOPLEFT", nil, "TOPLEFT" }, { 20, 584, 0, 12 },
@@ -915,6 +916,7 @@ function TreeTabClass:OpenOptimizerPopup()
 		local failure = not metrics and "DPS or configured survival is not finite."
 			or not optimizer:IsValid() and "Passive allocation or mastery selection is invalid."
 			or optimizer:ConstraintFailure(output)
+			or optimizer:Score(metrics) == -math.huge and "Result no longer meets the selected damage/survival goal."
 		if failure then
 			optimizer.failed = true
 			main:OpenMessagePopup("Tree Optimizer Error", "Result is no longer feasible: "..failure)

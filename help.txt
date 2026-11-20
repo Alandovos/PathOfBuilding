@@ -65,7 +65,8 @@ Optimize Tree:
 
 Use "Optimize Tree" at the bottom of the Tree tab after loading a character.
 Choose what to improve and a damage profile, then press "Find a better tree".
-The default goal is "Damage AND resilience - improve both". Single-metric goals retain the other metric within 0.5%.
+The default goal is "Damage AND survival - improve both". Survival means simulated mean time alive.
+No goal may reduce mean time alive below its starting value. "Survive longer" allows at most 0.5% starting-DPS loss.
 The Overview shows build-aware safety defaults and four defensive questions, without a wall of sliders.
 Advanced controls expose the damage metric, swap size and optional safety overrides.
 Full DPS measures skills included in Full DPS; selected skill measures the current skill/minion.
@@ -76,14 +77,16 @@ Changing the search profile, searching and applying a tree never change your act
 Built-in profiles preserve other player conditions and custom modifiers, replacing only incoming-hit settings
 and the managed synthetic background-DoT block. Saved Configurations use all their own conditions.
 Create/edit reusable profiles in the Configuration tab. Profile selection is remembered for this session.
-Balanced requires both DPS and configured survival score to improve over the starting tree, then ranks those results by their relative product.
-Configured survival replaces hit-only EHP in the optimizer, not elsewhere in PoB.
-The UI calls this score "Pressure resilience". It is not a boss-readiness certificate.
+Balanced requires higher DPS and longer mean time alive than the starting tree, ranked by their relative product.
+If time alive ties, including at the 30-second ceiling, buffer margin must improve instead.
+"Survive longer" maximizes mean time alive, using buffer margin only for equal times.
+"More damage" maximizes DPS without reducing starting mean time alive; ties favor time alive, then buffer margin.
+These objectives do not change ordinary PoB EHP and are not boss-kill or encounter-readiness predictions.
 The four-question readout shows maximum-hit and recovery snapshots, and explicitly flags missing tests:
 there is no boss-specific hit certification, two-hit recovery test, timed degen escape or guard/flask-off audit.
 It runs a 30-second benchmark using configured enemy damage, attack/cast time and mitigation.
-The score integrates expected time alive weighted by remaining usable Life/Mana/ES buffer;
-it is not EHP or literal seconds until death. Mean time alive is reported separately, capped at 30 seconds.
+Mean time alive is the survival objective, capped at 30 seconds. Buffer margin is the previous resource-weighted
+score: expected time alive weighted by remaining usable Life/Mana/ES buffer. It is not EHP or literal survival time.
 Recovery includes calculated player regeneration, capped/ramping leech and on-hit gains from the selected
 skill and enabled triggers, recoup, recharge, and block/suppression recovery. Mine/proxy leech is not
 assumed to heal the player. Recurring skill spending, temporary mine reservation and build degeneration
@@ -97,7 +100,6 @@ not timed recasts/resummons. Flask availability, on-kill healing, damage bursts 
 dynamic leech conversions and changes to offensive cadence during combat are not scheduled.
 Energy shield recharge is conservatively interrupted by damage/spending; special uninterrupted-recharge
 effects are not simulated. Strong builds can tie at the 30-second ceiling; this is not infinite survival.
-Single-metric goals allow up to 0.5% loss in the other metric from its starting value.
 The search exchanges connected branches up to the selected swap size, using the same allocated point count.
 Mastery allocations and selected effects are optimized, without selecting duplicate effects.
 Ascendancy passives can be reallocated within the selected primary and secondary ascendancies.
@@ -124,7 +126,7 @@ requirements (including Omniscience). These checks cannot be disabled.
 Build-aware defaults protect elemental/chaos resistances, casting resources and large-hit protection.
 Chaos resistance is unlocked for a 1-Life, chaos-immune build. Block is locked only at 50%+ attack/spell
 block or with recovery on block; suppression at 50%+; ailment avoidance if any elemental ailment is fully avoided.
-Unlocked defenses still contribute to the resilience score; only their separate "preserve this stat" floor is off.
+Unlocked defenses still affect simulated survival; only their separate "preserve this stat" floor is off.
 Advanced controls can enable or disable each optional floor and reset to build-aware defaults.
 Enabled allowable-reduction sliders start at 0% and range to 100% for elemental/chaos resistance, attack AND spell
 block, spell suppression, elemental ailment avoidance, and casting resources (mana).
