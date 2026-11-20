@@ -68,7 +68,8 @@ Choose Full DPS to optimize skills included in Full DPS, or selected skill DPS f
 Balanced maximizes the product of relative DPS and EHP; it may sacrifice one to improve the other.
 Single-metric goals allow up to 0.5% loss in the other metric from its starting value.
 The search exchanges connected branches up to the selected swap size, using the same allocated point count.
-Mastery allocations/effects, ascendancies, jewel sockets and cluster jewel nodes are never changed.
+Mastery allocations/effects, ascendancies, jewel sockets and socketed jewels are never changed.
+Passives on cluster jewels in allocated sockets can be reallocated.
 Required-node locks are saved with each tree and also protect nodes needed to keep them connected.
 Stop keeps the best result found so far. "Use Best as New Tree" preserves the original tree.
 New optimized tree names include a local-time timestamp in yyyymmddhhmmss format.

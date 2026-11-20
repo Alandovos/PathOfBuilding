@@ -10,7 +10,7 @@ function TreeOptimizer.CanChange(node, spec)
 	return node.type ~= "ClassStart" and node.type ~= "AscendClassStart"
 		and node.type ~= "Mastery" and not (original and original.type == "Mastery")
 		and not node.ascendancyName and node.type ~= "Socket" and not node.isJewelSocket
-		and not node.expansionSkill and node.id < 65536 and not node.isMultipleChoiceOption
+		and not node.isMultipleChoiceOption
 		and not spec.optimizerLocks[node.id]
 end
 

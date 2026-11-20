@@ -66,6 +66,52 @@ describe("Tree optimizer", function()
 		return finish(optimizer)
 	end
 
+	local function socketFireCluster()
+		local spec = build.spec
+		local socket
+		for nodeId in pairs(spec.tree.sockets) do
+			local node = spec.nodes[nodeId]
+			if node and node.expansionJewel and node.expansionJewel.size == 2 and node.path
+				and (not socket or #node.path < #socket.path or #node.path == #socket.path and node.id < socket.id) then
+				socket = node
+			end
+		end
+		assert(socket)
+		spec:AllocNode(socket)
+		local jewel = new("Item"):Item([[Rarity: RARE
+Optimizer Fire Cluster
+Large Cluster Jewel
+Cluster Jewel Skill: affliction_fire_damage
+Cluster Jewel Node Count: 8
+Implicits: 3
+Adds 8 Passive Skills
+2 Added Passive Skills are Jewel Sockets
+Added Small Passive Skills grant: 12% increased Fire Damage
+1 Added Passive Skill is Prismatic Heart
+1 Added Passive Skill is Widespread Destruction
+1 Added Passive Skill is Burning Bright]])
+		build.itemsTab:AddItem(jewel, true)
+		spec.jewels[socket.id] = jewel.id
+		spec:BuildClusterJewelGraphs()
+		for _, graph in pairs(spec.subGraphs) do
+			if graph.parentSocket.id == socket.id then
+				return socket, jewel, graph
+			end
+		end
+		error("Fire cluster graph was not built")
+	end
+
+	local function allocateSpareAttribute()
+		for _, node in pairs(build.spec.nodes) do
+			if not node.alloc and node.path and #node.path == 1
+				and (node.dn == "Strength" or node.dn == "Dexterity" or node.dn == "Intelligence") then
+				build.spec:AllocNode(node)
+				return node
+			end
+		end
+		error("No spare attribute passive found")
+	end
+
 	it("balances relative DPS and EHP on a separate tree", function()
 		local source = build.spec
 		local optimizer = search("BALANCED", 150, 80)
@@ -177,6 +223,156 @@ describe("Tree optimizer", function()
 				assert(not not optimizer.spec.allocNodes[id] == not not build.spec.allocNodes[id])
 			end
 		end
+	end)
+
+	it("moves a main-tree point into an equipped fire cluster and preserves it through save/load", function()
+		local socket, jewel, graph = socketFireCluster()
+		local target = graph.entranceNode
+		assert(target.expansionSkill and not target.alloc and #target.path == 1)
+		for id, node in pairs(build.spec.allocNodes) do
+			if TreeOptimizer.CanChange(node, build.spec) then
+				build.spec.optimizerLocks[id] = true
+			end
+		end
+		local spare = allocateSpareAttribute()
+		build.skillsTab:PasteSocketGroup("Fireball 1/0  1")
+		build.buildFlag = true
+		runCallback("OnFrame")
+		local source = build.spec
+		local calculate, baseline = build.calcsTab:GetMiscCalculator()
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+		optimizer.calculate = function(override)
+			return feasibleOutput({ CombinedDPS = override.spec.allocNodes[target.id] and 200 or 100 })
+		end
+		finish(optimizer)
+		assert(optimizer.spec.allocNodes[target.id] and not optimizer.spec.allocNodes[spare.id])
+		assert(optimizer.spec.allocNodes[socket.id] and optimizer.spec.jewels[socket.id] == jewel.id)
+		assert(source.allocNodes[spare.id] and not source.allocNodes[target.id])
+		local output = calculate({ spec = optimizer.spec })
+		assert(output.CombinedDPS > baseline.CombinedDPS, "Cluster fire damage must increase actual Fireball DPS")
+		local targetId, socketId, jewelId, budget = target.id, socket.id, jewel.id, optimizer.budget
+		optimizer.spec:ResetUndo()
+		table.insert(build.treeTab.specList, optimizer.spec)
+		build.treeTab:SetActiveSpec(#build.treeTab.specList)
+		local xml = build:SaveDB("Optimized fire cluster")
+		loadBuildFromXML(xml)
+		assert(build.spec.allocNodes[targetId] and build.spec:CountAllocNodes() == budget)
+		assert(build.spec.allocNodes[socketId] and build.spec.jewels[socketId] == jewelId)
+		runCallback("OnFrame")
+		assert(math.abs(build.calcsTab.mainOutput.CombinedDPS - output.CombinedDPS) < 1e-8)
+	end)
+
+	it("exchanges a branch for a multi-point path to a cluster notable", function()
+		local socket, jewel, graph = socketFireCluster()
+		local target
+		for _, node in ipairs(graph.nodes) do
+			if node.type == "Notable" and (not target or #node.path < #target.path) then
+				target = node
+			end
+		end
+		assert(target and #target.path > 1)
+		local cost = #target.path
+		for _, node in ipairs(target.path) do
+			assert(TreeOptimizer.CanChange(node, build.spec), "Cluster path crosses a fixed "..node.type)
+		end
+		for id, node in pairs(build.spec.allocNodes) do
+			if TreeOptimizer.CanChange(node, build.spec) then
+				build.spec.optimizerLocks[id] = true
+			end
+		end
+		local branch
+		for _, node in pairs(build.spec.nodes) do
+			if not node.alloc and not node.expansionSkill and node.path and #node.path == cost then
+				local allowed = true
+				for _, pathNode in ipairs(node.path) do
+					if not TreeOptimizer.CanChange(pathNode, build.spec) then
+						allowed = false
+						break
+					end
+				end
+				if allowed then
+					branch = node
+					break
+				end
+			end
+		end
+		assert(branch)
+		local budget = build.spec:CountAllocNodes()
+		build.spec:AllocNode(branch)
+		assert(build.spec:CountAllocNodes() == budget + cost, "Spare branch must provide the cluster path's point cost")
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", cost, "CombinedDPS")
+		optimizer.calculate = function(override)
+			return feasibleOutput({ CombinedDPS = override.spec.allocNodes[target.id] and 200 or 100 })
+		end
+		finish(optimizer)
+		assert(optimizer.improvements > 0 and optimizer.spec.allocNodes[target.id],
+			"Cluster path cost "..cost.."; tested "..optimizer.tested.."; rejected "..optimizer.rejected)
+		for _, node in ipairs(target.path) do
+			assert(optimizer.spec.allocNodes[node.id], "The entire cluster path must be allocated")
+		end
+		assert(optimizer.spec.allocNodes[socket.id] and optimizer.spec.jewels[socket.id] == jewel.id)
+	end)
+
+	it("can refund cluster passives but respects cluster locks and keeps sockets fixed", function()
+		local socket, jewel, graph = socketFireCluster()
+		local target = graph.entranceNode
+		build.spec:AllocNode(target)
+		local function optimize()
+			local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS")
+			optimizer.calculate = function(override)
+				assert(override.spec.allocNodes[socket.id] and override.spec.jewels[socket.id] == jewel.id)
+				return feasibleOutput({ CombinedDPS = not override.spec.allocNodes[target.id] and 200 or 100 })
+			end
+			return finish(optimizer)
+		end
+		local optimizer = optimize()
+		assert(optimizer.improvements > 0 and not optimizer.spec.allocNodes[target.id])
+		for _, node in ipairs(graph.nodes) do
+			if node.type == "Socket" then
+				assert(not optimizer.spec.allocNodes[node.id], "Optimizer must not allocate new jewel sockets")
+			end
+		end
+		build.spec.optimizerLocks[target.id] = true
+		optimizer = optimize()
+		assert(optimizer.improvements == 0 and optimizer.spec.allocNodes[target.id])
+	end)
+
+	it("allocates passives in a nested equipped cluster without disconnecting either jewel", function()
+		local socket, jewel, graph = socketFireCluster()
+		local nestedSocket
+		for _, node in ipairs(graph.nodes) do
+			if node.type == "Socket" then
+				nestedSocket = node
+				break
+			end
+		end
+		assert(nestedSocket)
+		build.spec:AllocNode(nestedSocket)
+		local nestedJewel = new("Item"):Item([[Rarity: UNIQUE
+One With Nothing
+Small Cluster Jewel
+Implicits: 0
+Adds Hollow Palm Technique]])
+		build.itemsTab:AddItem(nestedJewel, true)
+		build.spec.jewels[nestedSocket.id] = nestedJewel.id
+		build.spec:BuildClusterJewelGraphs()
+		local target
+		for _, subgraph in pairs(build.spec.subGraphs) do
+			if subgraph.parentSocket.id == nestedSocket.id then
+				target = subgraph.entranceNode
+			end
+		end
+		assert(target and not target.alloc and #target.path == 1)
+		allocateSpareAttribute()
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 3, "CombinedDPS")
+		optimizer.calculate = function(override)
+			assert(override.spec.allocNodes[socket.id] and override.spec.jewels[socket.id] == jewel.id)
+			assert(override.spec.allocNodes[nestedSocket.id] and override.spec.jewels[nestedSocket.id] == nestedJewel.id)
+			return feasibleOutput({ CombinedDPS = override.spec.allocNodes[target.id] and 200 or 100 })
+		end
+		finish(optimizer)
+		assert(optimizer.improvements > 0 and optimizer.spec.allocNodes[target.id])
+		assert(not build.spec.allocNodes[target.id], "Original nested cluster must be unchanged")
 	end)
 
 	it("uses the chosen Full DPS or minion metric rather than player DPS", function()
