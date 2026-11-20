@@ -92,6 +92,7 @@ function PassiveSpecClass:Init(treeVersion, convert)
 
 	-- Keys are node IDs, values are the replacement node
 	self.hashOverrides = { }
+	self.optimizerLocks = { }
 
 	-- Cached highlight path for Split Personality jewels
 	self.splitPersonalityPath = { }
@@ -102,6 +103,9 @@ end
 
 function PassiveSpecClass:Load(xml, dbFileName)
 	self.title = xml.attrib.title
+	for id in (xml.attrib.optimizerLocks or ""):gmatch("%d+") do
+		self.optimizerLocks[tonumber(id)] = true
+	end
 	-- Specs without this attribute predate the hash-fix migration and are treated as legacy.
 	self.clusterHashFormatVersion = tonumber(xml.attrib.clusterHashFormatVersion) or (xml.attrib.nodes and 1 or 2)
 	local url
@@ -195,6 +199,11 @@ function PassiveSpecClass:Load(xml, dbFileName)
 end
 
 function PassiveSpecClass:Save(xml)
+	local optimizerLocks = { }
+	for id in pairs(self.optimizerLocks) do
+		t_insert(optimizerLocks, id)
+	end
+	table.sort(optimizerLocks)
 	local allocNodeIdList = { }
 	for nodeId in pairs(self.allocNodes) do
 		t_insert(allocNodeIdList, nodeId)
@@ -220,6 +229,9 @@ function PassiveSpecClass:Save(xml)
 		nodes = table.concat(allocNodeIdList, ","),
 		masteryEffects = table.concat(masterySelections, ",")
 	}
+	if #optimizerLocks > 0 then
+		xml.attrib.optimizerLocks = table.concat(optimizerLocks, ",")
+	end
 	t_insert(xml, {
 		-- Legacy format
 		elem = "URL",
@@ -2433,15 +2445,17 @@ function PassiveSpecClass:CreateUndoState()
 	return {
 		classId = self.curClassId,
 		ascendClassId = self.curAscendClassId,
-		secondaryAscendClassId = self.secondaryAscendClassId,
+		secondaryAscendClassId = self.curSecondaryAscendClassId,
 		hashList = allocNodeIdList,
 		hashOverrides = hashOverridesCopy,
 		masteryEffects = selections,
+		optimizerLocks = copyTable(self.optimizerLocks),
 		treeVersion = self.treeVersion
 	}
 end
 
 function PassiveSpecClass:RestoreUndoState(state, treeVersion)
+	self.optimizerLocks = copyTable(state.optimizerLocks or { })
 	self:ImportFromNodeList(nil, state.classId, state.ascendClassId, state.secondaryAscendClassId, state.hashList, state.hashOverrides, state.masteryEffects, treeVersion or state.treeVersion)
 	self:SetWindowTitleWithBuildClass()
 end

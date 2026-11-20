@@ -521,7 +521,11 @@ function PassiveTreeViewClass:Draw(build, viewPort, inputEvents)
 			end
 		end
 	elseif treeClick == "RIGHT" then
-		if hoverNode and hoverNode.alloc and hoverNode.type == "Socket" then
+		if hoverNode and IsKeyDown("ALT") and (hoverNode.alloc or spec.optimizerLocks[hoverNode.id]) then
+			spec.optimizerLocks[hoverNode.id] = not spec.optimizerLocks[hoverNode.id] or nil
+			spec:AddUndoState()
+			build.buildFlag = true
+		elseif hoverNode and hoverNode.alloc and hoverNode.type == "Socket" then
 			local slot = build.itemsTab.sockets[hoverNode.id]
 			if slot:IsEnabled() then
 				-- User right-clicked a jewel socket, jump to the item page and focus the corresponding item slot control
@@ -1053,11 +1057,16 @@ function PassiveTreeViewClass:Draw(build, viewPort, inputEvents)
 			end
 
 		end
+		if spec.optimizerLocks[nodeId] then
+			SetDrawLayer(nil, 30)
+			SetDrawColor(1, 0.8, 0.2)
+			DrawString(scrX + 12, scrY - 18, "LEFT", 12, "VAR", "L")
+		end
 		if node == hoverNode and (node.type ~= "Socket" or not IsKeyDown("SHIFT")) and (node.type ~= "Mastery" or node.masteryEffects) and not IsKeyDown("CTRL") and not main.popups[1] then
 			-- Draw tooltip
 			SetDrawLayer(nil, 100)
 			local size = m_floor(node.size * scale)
-			if self.tooltip:CheckForUpdate(node, self.showStatDifferences, self.tracePath, launch.devModeAlt, build.outputRevision, build.spec.allocMode) then
+			if self.tooltip:CheckForUpdate(node, self.showStatDifferences, self.tracePath, launch.devModeAlt, build.outputRevision, build.spec.allocMode, spec.optimizerLocks[node.id]) then
 				self:AddNodeTooltip(self.tooltip, node, build)
 			end
 			self.tooltip.center = true
@@ -1443,6 +1452,11 @@ function PassiveTreeViewClass:AddNodeName(tooltip, node, build)
 	end
 	tooltip.center = true
 	tooltip:AddLine(24, nodeName..(launch.devModeAlt and " ["..node.id.."]" or ""), "FONTIN")
+	if build.spec.optimizerLocks[node.id] then
+		tooltip:AddLine(14, "^xFFCC33Required by tree optimizer (Alt + right-click to unlock)")
+	elseif node.alloc then
+		tooltip:AddLine(14, "^7Alt + right-click to require this node when optimizing")
+	end
 	tooltip.center = false
 	if launch.devModeAlt and node.id > 65535 then
 		-- Decompose cluster node Id

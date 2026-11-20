@@ -58,6 +58,21 @@ Ctrl + LMB	Zoom in on mouse cursor position
 Hold Shift	Enable "path trace mode"
 	(highlighted nodes will stay highlighted, and will be allocated when a node is clicked on the tree)
 Up/Down arrow	Select previous/next tree respectively
+Alt + RMB	Lock/unlock an allocated node as required by the tree optimizer (gold L marker)
+
+Optimize Tree:
+
+Use "Optimize Tree" at the bottom of the Tree tab after loading a character.
+Choose balanced DPS/EHP, DPS without EHP loss, or EHP without DPS loss, then press Start.
+Choose Full DPS to optimize skills included in Full DPS, or selected skill DPS for the current skill/minion.
+Balanced maximizes the product of relative DPS and EHP; it may sacrifice one to improve the other.
+The search exchanges connected branches up to the selected swap size, using the same allocated point count.
+Mastery allocations/effects, ascendancies, jewel sockets and cluster jewel nodes are never changed.
+Required-node locks are saved with each tree and also protect nodes needed to keep them connected.
+Stop keeps the best result found so far. "Use Best as New Tree" preserves the original tree.
+Close (or Escape) discards the search. No changes are made unless you use the result.
+This is a local search, not an exhaustive/global optimizer; it can miss improvements requiring other swaps.
+Results depend on your skills, gear and enemy configuration. Review requirements and defensive trade-offs.
 
 Developer Use
 

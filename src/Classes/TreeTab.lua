@@ -17,6 +17,7 @@ local m_abs = math.abs
 local s_format = string.format
 local tradeHelpers = require("Classes.TradeHelpers")
 local dkjson = require "dkjson"
+local TreeOptimizer = require("Classes.TreeOptimizer")
 
 ---@class TreeTab: ControlHost
 local TreeTabClass = newClass("TreeTab", "ControlHost")
@@ -190,12 +191,15 @@ function TreeTabClass:TreeTab(build)
 	self.controls.findTimelessJewel = new("ButtonControl"):ButtonControl({ "LEFT", self.controls.treeSearch, "RIGHT" }, { 8, 0, 150, 20 }, "Find Timeless Jewel", function()
 		self:FindTimelessJewel()
 	end)
+	self.controls.optimizeTree = new("ButtonControl"):ButtonControl({ "LEFT", self.controls.findTimelessJewel, "RIGHT" }, { 8, 0, 115, 20 }, "Optimize Tree", function()
+		self:OpenOptimizerPopup()
+	end)
 
 	--Default index for Tattoos
 	self.defaultTattoo = { }
 
 	-- Show Node Power Checkbox
-	self.controls.treeHeatMap = new("CheckBoxControl"):CheckBoxControl({ "LEFT", self.controls.findTimelessJewel, "RIGHT" }, { 130, 0, 20 }, "Show Node Power:", function(state)
+	self.controls.treeHeatMap = new("CheckBoxControl"):CheckBoxControl({ "LEFT", self.controls.optimizeTree, "RIGHT" }, { 130, 0, 20 }, "Show Node Power:", function(state)
 		self.viewer.showHeatMap = state
 		self.controls.treeHeatMapStatSelect.shown = state
 
@@ -402,6 +406,7 @@ function TreeTabClass:Draw(viewPort, inputEvents)
 	
 	local widthSecondLineControls = self.controls.treeSearch.width + 8
 									+ self.controls.findTimelessJewel.width + self.controls.findTimelessJewel.x
+									+ self.controls.optimizeTree.width + self.controls.optimizeTree.x
 									+ self.controls.treeHeatMap.width + 130
 									+ self.controls.nodePowerMaxDepthSelect.width + self.controls.nodePowerMaxDepthSelect.x
 									+ (self.isCustomMaxDepth and (self.controls.nodePowerMaxDepthCustom.width + self.controls.nodePowerMaxDepthCustom.x) or 0)
@@ -420,7 +425,7 @@ function TreeTabClass:Draw(viewPort, inputEvents)
 
 	-- Check second line
 	if viewPort.width >= widthSecondLineControls + rightMargin then
-		self.controls.treeHeatMap:SetAnchor("LEFT", self.controls.findTimelessJewel, "RIGHT", 130, 0)
+		self.controls.treeHeatMap:SetAnchor("LEFT", self.controls.optimizeTree, "RIGHT", 130, 0)
 	else
 		linesHeight = linesHeight * 2
 		self.controls.treeHeatMap:SetAnchor("TOPLEFT", self.controls.treeSearch, "BOTTOMLEFT", 124, 4)
@@ -649,6 +654,110 @@ function TreeTabClass:OpenSpecManagePopup()
 			main:ClosePopup()
 		end),
 	})
+end
+
+function TreeTabClass:CreateTreeOptimizer(goal, depth, dpsStat)
+	local source = self.build.spec
+	local spec = new("PassiveSpec"):PassiveSpec(self.build, source.treeVersion)
+	spec.jewels = copyTable(source.jewels)
+	spec:RestoreUndoState(source:CreateUndoState())
+	spec:BuildClusterJewelGraphs()
+	local calculate = self.build.calcsTab:GetMiscCalculator()
+	return TreeOptimizer.new(spec, calculate, goal, depth, dpsStat)
+end
+
+function TreeTabClass:OpenOptimizerPopup()
+	local controls = { }
+	local optimizer
+	local source = self.build.spec
+	local goals = {
+		{ label = "Balanced DPS and EHP", value = "BALANCED" },
+		{ label = "DPS, no EHP loss", value = "DPS" },
+		{ label = "EHP, no DPS loss", value = "EHP" },
+	}
+	controls.info = new("LabelControl"):LabelControl(nil, { -310, 22, 0, 14 },
+		"Reallocates your current points; saves a separate tree.\nMasteries, ascendancies, sockets and cluster nodes stay fixed.\nAlt + right-click nodes on the tree to lock/unlock requirements.\nLocal branch search, not a global optimum. Larger swaps take longer.")
+	controls.goalLabel = new("LabelControl"):LabelControl(nil, { -310, 100, 0, 16 }, "Goal:")
+	controls.goal = new("DropDownControl"):DropDownControl(nil, { -125, 97, 260, 20 }, goals)
+	controls.depthLabel = new("LabelControl"):LabelControl(nil, { 30, 100, 0, 16 }, "Max swap:")
+	controls.depth = new("DropDownControl"):DropDownControl(nil, { 200, 97, 100, 20 }, { 1, 3, 5, 10 })
+	controls.depth.selIndex = 2
+	controls.metricLabel = new("LabelControl"):LabelControl(nil, { -310, 130, 0, 16 }, "DPS metric:")
+	controls.metric = new("DropDownControl"):DropDownControl(nil, { -125, 127, 260, 20 }, {
+		{ label = "Selected skill (or its minion)", value = "CombinedDPS" },
+		{ label = "Full DPS (skills included in Full DPS)", value = "FullDPS" },
+	})
+	local _, output = self.build.calcsTab:GetMiscCalculator()
+	controls.metric.selIndex = output.FullDPS and output.FullDPS > 0 and 2 or 1
+	controls.status = new("LabelControl"):LabelControl(nil, { -310, 165, 0, 14 }, function()
+		if not optimizer then
+			return "Ready. Balanced maximizes DPS x EHP; either metric may fall.\nSingle-metric goals keep the other metric at least at its starting value."
+		elseif optimizer.failed then
+			return "^1Search failed. Original tree unchanged; see the error message."
+		elseif not optimizer.base then
+			return "Calculating starting DPS and EHP..."
+		end
+		local status = optimizer.done and (optimizer.stopped and "Stopped" or "Finished (local optimum)") or "Searching"
+		local metrics = optimizer.bestMetrics
+		return s_format("%s | Pass %d, branch %d/%d | Tested %d trees (%d non-finite rejected)\nDPS: %.1f -> %.1f (%+.2f%%)\nEHP: %.1f -> %.1f (%+.2f%%)",
+			status, optimizer.pass, optimizer.branch or 0, optimizer.branches or 0, optimizer.tested, optimizer.rejected,
+			optimizer.base.dps, metrics.dps, (metrics.dps / optimizer.base.dps - 1) * 100,
+			optimizer.base.ehp, metrics.ehp, (metrics.ehp / optimizer.base.ehp - 1) * 100)
+	end)
+	controls.warning = new("LabelControl"):LabelControl(nil, { -310, 240, 0, 14 },
+		"Uses current skill, items and enemy/configuration settings for every calculation.\nReview attribute requirements, resistances and other trade-offs before using a result.")
+	local function running()
+		return optimizer and not optimizer.done and not optimizer.failed
+	end
+	controls.start = new("ButtonControl"):ButtonControl(nil, { -235, 292, 100, 20 }, "Start", function()
+		for id in pairs(source.optimizerLocks) do
+			if not source.allocNodes[id] then
+				main:OpenMessagePopup("Required Node Unallocated", "Alt + right-click the unallocated required node to unlock it, or allocate it before optimizing.")
+				return
+			end
+		end
+		optimizer = self:CreateTreeOptimizer(goals[controls.goal.selIndex].value,
+			controls.depth.list[controls.depth.selIndex], controls.metric.list[controls.metric.selIndex].value)
+	end)
+	controls.start.enabled = function() return not running() end
+	controls.goal.enabled = controls.start.enabled
+	controls.depth.enabled = controls.start.enabled
+	controls.metric.enabled = controls.start.enabled
+	controls.stop = new("ButtonControl"):ButtonControl(nil, { -120, 292, 100, 20 }, "Stop", function()
+		optimizer:Stop()
+		optimizer.stopped = true
+	end)
+	controls.stop.enabled = running
+	controls.save = new("ButtonControl"):ButtonControl(nil, { 65, 292, 225, 20 }, "Use Best as New Tree", function()
+		optimizer:Stop()
+		local spec = optimizer.spec
+		spec.title = (source.title or "Default").." (optimized)"
+		spec:ResetUndo()
+		t_insert(self.specList, spec)
+		self:SetActiveSpec(#self.specList)
+		self.modFlag = true
+		main:ClosePopup()
+	end)
+	controls.save.enabled = function()
+		return optimizer and optimizer.done and not optimizer.failed and optimizer.improvements > 0
+	end
+	controls.close = new("ButtonControl"):ButtonControl(nil, { 245, 292, 100, 20 }, "Close", function()
+		main:ClosePopup()
+	end)
+	main:OpenPopup(660, 330, "Optimize Passive Tree", controls, nil, nil, "close", nil, function()
+		if not running() then
+			return
+		end
+		local deadline = os.clock() + 0.015
+		repeat
+			local ok, err = coroutine.resume(optimizer.worker)
+			if not ok then
+				optimizer.failed = true
+				main:OpenMessagePopup("Tree Optimizer Error", tostring(err))
+				return
+			end
+		until optimizer.done or os.clock() >= deadline
+	end)
 end
 
 function TreeTabClass:OpenVersionConvertPopup(version, ignoreTreeSubType)
