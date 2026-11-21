@@ -41,6 +41,10 @@ function CalcsTabClass:CalcsTab(build)
 	self.controls.search = new("EditControl"):EditControl({"TOPLEFT",self,"TOPLEFT"}, {4, 5, 260, 20}, "", "Search", "%c", 100, nil, nil, nil, true)
 	t_insert(self.controls, self.controls.search)
 
+	self.controls.statWeights = new("ButtonControl"):ButtonControl({"LEFT",self.controls.search,"RIGHT"}, {8, 0, 130, 20}, "Stat Weights...", function()
+		self:OpenStatWeights()
+	end)
+
 	-- Special section for skill/mode selection
 	self:NewSection(3, "SkillSelect", 1, colorCodes.NORMAL, {{ defaultCollapsed = false, label = "View Skill Details", data = {
 		{ label = "Socket Group", { controlName = "mainSocketGroup", 
@@ -755,6 +759,137 @@ function CalcsTabClass:CalculateCombinedOffDefStat(original, modified)
 	local modifiedDps = modified.CombinedDPS + (modified.Minion and modified.Minion.CombinedDPS or 0)
 	local dpsIncr = original.CombinedDPS + (original.Minion and original.Minion.CombinedDPS or 0) - modifiedDps
 	return dpsIncr / modifiedDps, defence
+end
+
+function CalcsTabClass:OpenStatWeights()
+	local weights = require("Modules.StatWeights")
+	local profiles = require("Modules.OptimizerProfiles")
+	local controls, report, worker = { }
+	local keys = { "dps", "ehp", "time" }
+	local function running()
+		return worker ~= nil
+	end
+	local function reset()
+		report = nil
+		controls.list.list = { }
+		controls.status.label = "^7Choose a profile, then Calculate."
+	end
+	controls.profile = new("DropDownControl"):DropDownControl({"TOPLEFT",nil,"TOPLEFT"}, {15, 15, 570, 20}, profiles.List(self.build), reset)
+	controls.profile.tooltipFunc = function(tooltip, mode, index, value)
+		tooltip:Clear()
+		if mode ~= "OUT" then
+			tooltip:AddLine(14, value.description)
+		end
+	end
+	controls.metric = new("DropDownControl"):DropDownControl({"TOPLEFT",nil,"TOPLEFT"}, {600, 15, 180, 20}, {
+		{ label = "Combined DPS", stat = "CombinedDPS" }, { label = "Full DPS", stat = "FullDPS" },
+	}, reset)
+	controls.status = new("LabelControl"):LabelControl({"TOPLEFT",nil,"TOPLEFT"}, {15, 48, 0, 14}, "^7Choose a profile, then Calculate.")
+	controls.explanation = new("LabelControl"):LabelControl({"TOPLEFT",nil,"TOPLEFT"}, {15, 74, 0, 14},
+		"^7Tier-sized stat increases: each weight is the total gain from the listed increment, not a whole affix roll.")
+	controls.limits = new("LabelControl"):LabelControl({"TOPLEFT",nil,"TOPLEFT"}, {15, 96, 0, 14},
+		"^7Local estimates, not direct upgrades to your equipped items. Survival is capped at 30s; zero gain can hide a breakpoint.")
+	controls.list = new("ListControl"):ListControl({"TOPLEFT",nil,"TOPLEFT"}, {15, 158, 930, 390}, 20, "VERTICAL", false)
+	local list = controls.list
+	list.colLabels = true
+	list.colList = {
+		{ width = 435, label = "One average tier step added", sortable = true },
+		{ width = 155, label = "DPS gain %", sortable = true },
+		{ width = 155, label = "EHP gain %", sortable = true },
+		{ label = "Time gain %", sortable = true },
+	}
+	local function field()
+		return controls.units.selIndex == 1 and "percent" or "delta"
+	end
+	function list:GetRowValue(column, index, row)
+		if column == 1 then
+			return row.slot and row.increment or row.label.." (no tier step)"
+		end
+		return weights.Format(row[keys[column - 1]][field()], field() == "percent")
+	end
+	function list:ReSort(column)
+		table.sort(self.list, function(a, b)
+			if column ~= 1 then
+				local av, bv = a[keys[column - 1]][field()], b[keys[column - 1]][field()]
+				if av ~= bv then
+					return (av or -math.huge) > (bv or -math.huge)
+				end
+			end
+			return a.label < b.label
+		end)
+	end
+	function list:AddValueTooltip(tooltip, index, row)
+		tooltip:Clear()
+		tooltip:AddLine(16, row.slot and row.increment or row.label)
+		tooltip:AddLine(14, row.slot and "Total measured gain from this average tier-sized increment."
+			or "No comparable tier-sized increment is available for this stat.")
+		tooltip:AddLine(14, "Global flat defences are not local armour/evasion/ES affixes on an equipment base.")
+		tooltip:AddLine(14, "EHP is PoB's Total EHP, not the optimizer's buffer score.")
+		tooltip:AddLine(14, "Time is mean simulated survival under the selected profile, not a boss kill guarantee.")
+		tooltip:AddLine(14, "N/A means an undefined percentage (zero baseline), missing output, or a non-finite value.")
+		for _, key in ipairs(keys) do
+			tooltip:AddLine(14, string.format("%s: %s (%s)", key,
+				weights.Format(row[key].delta), weights.Format(row[key].percent, true)))
+		end
+	end
+	controls.units = new("DropDownControl"):DropDownControl({"TOPLEFT",nil,"TOPLEFT"}, {15, 126, 320, 20},
+		{ "Percentage gain per average tier step", "Absolute gain per average tier step" }, function(index)
+			for column, label in ipairs({ "DPS", "EHP", "Time (s)" }) do
+				list.colList[column + 1].label = label..(index == 1 and " gain %" or " gain")
+			end
+		end)
+	controls.metric.tooltipText = "Combined DPS includes the selected skill and its minion.\nFull DPS includes all included skills; if none are included, uses Combined DPS."
+	controls.calculate = new("ButtonControl"):ButtonControl({"TOPLEFT",nil,"TOPLEFT"}, {15, 568, 150, 24}, "Calculate", function()
+		reset()
+		controls.status.label = "^7Calculating baseline..."
+		worker = coroutine.create(function()
+			local calculate = profiles.CreateCalculator(self.build, controls.profile.list[controls.profile.selIndex])
+			report = weights.Calculate(calculate, controls.metric.list[controls.metric.selIndex].stat, function(row, index, total)
+				table.insert(list.list, row)
+				controls.status.label = string.format("^7Calculating stat weights: %d / %d", index, total)
+				coroutine.yield()
+			end)
+			local base = report.baseline
+			controls.status.label = string.format("^7Baseline: DPS %.5g | EHP %.5g | Mean time alive %.3fs / %.0fs window",
+				base.dps, base.ehp, base.time, base.window)
+			list:ReSort(2)
+		end)
+	end)
+	controls.calculate.enabled = function() return not running() end
+	controls.profile.enabled = controls.calculate.enabled
+	controls.metric.enabled = controls.calculate.enabled
+	controls.copy = new("ButtonControl"):ButtonControl({"TOPLEFT",nil,"TOPLEFT"}, {180, 568, 150, 24}, "Copy Report", function()
+		local base = report.baseline
+		local lines = {
+			controls.profile.list[controls.profile.selIndex].label,
+			string.format("Baseline DPS: %.8g; EHP: %.8g; survival: %.8gs (%.0fs window)", base.dps, base.ehp, base.time, base.window),
+			"Stat\tTested tier step\t"..list.colList[2].label.."\t"..list.colList[3].label.."\t"..list.colList[4].label,
+		}
+		for _, row in ipairs(list.list) do
+			table.insert(lines, table.concat({ row.label, row.slot and row.increment or "N/A",
+				list:GetRowValue(2, 0, row), list:GetRowValue(3, 0, row), list:GetRowValue(4, 0, row) }, "\t"))
+		end
+		Copy(table.concat(lines, "\n"))
+	end)
+	controls.copy.enabled = function() return report ~= nil and not running() end
+	controls.close = new("ButtonControl"):ButtonControl({"TOPLEFT",nil,"TOPLEFT"}, {825, 568, 120, 24}, "Close", function()
+		worker = nil
+		main:ClosePopup()
+	end)
+	main:OpenPopup(960, 610, "Measured Stat Weights", controls, nil, nil, "close", nil, function()
+		if not worker then
+			return
+		end
+		local ok, err = coroutine.resume(worker)
+		if not ok then
+			worker, report = nil, nil
+			list.list = { }
+			controls.status.label = "^1Could not calculate stat weights."
+			main:OpenMessagePopup("Stat Weight Error", tostring(err))
+		elseif coroutine.status(worker) == "dead" then
+			worker = nil
+		end
+	end)
 end
 
 function CalcsTabClass:GetMiscCalculator()

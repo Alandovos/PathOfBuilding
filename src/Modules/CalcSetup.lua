@@ -705,6 +705,10 @@ function calcs.initEnv(build, mode, override, specEnv)
 		end
 	end
 
+	if override.extraMods then
+		env.modDB:AddList(override.extraMods)
+	end
+
 	if override.conditions then
 		for _, flag in ipairs(override.conditions) do
 			modDB.conditions[flag] = true

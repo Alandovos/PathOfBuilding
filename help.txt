@@ -71,6 +71,19 @@ Other equipment is kept in place. Tooltips and imported candidates use the same 
 Candidates without an available compatible slot are marked unavailable. Rankings follow the active skill and Configuration.
 This is a stat comparison, not a recommendation that an item improves overall boss survivability.
 
+Measured stat weights:
+
+In Calcs, click "Stat Weights...", select a damage profile and DPS metric, then Calculate.
+The sortable report measures DPS, PoB Total EHP, and mean simulated survival time by adding one stat at a time.
+Profiles are isolated comparisons: your active Configuration, equipment, and passive allocation are unchanged.
+Steps use average high-tier gaps on the smallest eligible gear, rather than arbitrary amounts or whole affix rolls.
+Fractional increments are intentional averages. Stats without a comparable tier step are marked unavailable.
+The percentage and optional absolute gains apply to one average tier step added to your current build.
+These are reference sensitivities, not actual upgrades to your equipped affixes or equal-cost comparisons.
+Global flat defences are not local armour/evasion/ES rolls on a base. Caps, rounding, and breakpoints can produce zero weights.
+Survival uses the same recovery-aware simulation as the optimizer, with a 30-second ceiling, not a real boss rotation.
+N/A indicates an undefined percentage, missing output, or non-finite metric. Copy Report copies the displayed units.
+
 Optimize Tree:
 
 Use "Optimize Tree" at the bottom of the Tree tab after loading a character.

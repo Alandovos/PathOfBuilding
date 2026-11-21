@@ -84,6 +84,7 @@ end
 ---@field extraJewelFuncs ModList?
 ---@field castingHeadroom boolean?
 ---@field survivability boolean?
+---@field extraMods Mod[]? Temporary player modifiers for isolated comparisons.
 
 -- A conservative burst allowance plus an indefinite, full-cadence recovery check.
 function calcs.manaCastingHeadroom(skills, pool, recovery, reservation)
