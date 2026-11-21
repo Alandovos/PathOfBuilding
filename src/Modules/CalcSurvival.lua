@@ -148,7 +148,11 @@ function calcs.simulateSurvival(actor, profile)
 				for damageType, amount in pairs(profile.degen) do
 					damage[damageType] = amount * step
 				end
+				local beforeDegen = pools[rechargePool]
 				pools = calcs.reducePoolsByDamage(pools, damage, actor, true)
+				if pools[rechargePool] < beforeDegen - 1e-9 then
+					state.rechargeAge = 0
+				end
 				state.pools = pools
 			end
 			for _, resource in ipairs(resources) do
@@ -281,6 +285,7 @@ function calcs.calcSurvival(env, skills)
 	for _, entry in ipairs(skills) do
 		if entry.recurring then
 			local stream = { }
+			local converted = entry.output.EnergyShieldLeechFromLifeUncappedRate or 0
 			for _, resource in ipairs(resources) do
 				local costResource = resource == "EnergyShield" and "ES" or resource
 				local calculated = entry.output
@@ -288,12 +293,21 @@ function calcs.calcSurvival(env, skills)
 				local paidResource = resource == "Mana" and modDB:Flag(nil, "EnergyShieldProtectsMana") and "EnergyShield" or resource
 				profile.spending[paidResource] = profile.spending[paidResource] + cost
 				local instant = calculated[resource.."LeechInstantRate"] or 0
-				local normal = math.max(0, (calculated[resource.."LeechRate"] or 0) - instant)
+				local normal = math.max(0, (calculated[resource.."LeechUncappedRate"] or 0) - (resource == "EnergyShield" and converted or 0))
 				local duration = calculated[resource.."LeechDuration"] or 0
 				assert(normal == 0 or duration > 0, "Missing calculated "..resource.." leech duration.")
 				stream[resource] = { normal = normal, duration = duration, instant = instant + (calculated[resource.."OnHitRate"] or 0) }
 			end
 			table.insert(profile.leech, stream)
+			if converted > 0 then
+				local duration = entry.output.EnergyShieldLeechFromLifeDuration or 0
+				assert(duration > 0, "Missing converted life leech duration.")
+				table.insert(profile.leech, {
+					Life = { normal = 0, duration = 0, instant = 0 },
+					Mana = { normal = 0, duration = 0, instant = 0 },
+					EnergyShield = { normal = converted, duration = duration, instant = 0 },
+				})
+			end
 		end
 	end
 	for _, damageType in ipairs(damageTypes) do

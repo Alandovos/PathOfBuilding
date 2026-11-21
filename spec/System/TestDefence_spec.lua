@@ -26,6 +26,64 @@ describe("TestDefence", function()
 		return actor, profile
 	end
 
+	it("does not recharge through degeneration hidden by regeneration", function()
+		local actor, profile = survivalFixture()
+		profile.caps.EnergyShield = 1000
+		profile.interval = 3
+		profile.damage.Physical = 1000
+		profile.outcomes[1].damage.Physical = 1000
+		profile.regen.EnergyShield = 600
+		profile.hasDegen = true
+		profile.degen.Physical = 500
+		actor.output.EnergyShieldRechargeDelay = 1
+		actor.output.EnergyShieldRecharge = 0
+		local baseline = calcs.simulateSurvival(actor, profile)
+		actor.output.EnergyShieldRecharge = 1000
+		local recharging = calcs.simulateSurvival(actor, profile)
+		assert.near(9, baseline.ConfiguredSurvivalTime, 1e-6)
+		assert.near(baseline.ConfiguredSurvivalTime, recharging.ConfiguredSurvivalTime, 1e-6)
+		assert.near(baseline.ConfiguredSurvivalScore, recharging.ConfiguredSurvivalScore, 1e-6)
+		assert.are.equal(0, recharging.ConfiguredSurvivalChance)
+	end)
+
+	it("keeps native and converted ES leech as separate uncapped streams", function()
+		local env = copyTable(build.calcsTab.mainEnv, true)
+		env.player = copyTable(env.player, true)
+		env.player.output = copyTable(env.player.output, true)
+		env.player.output.ManaCastingReservation = 0
+		env.player.output.MaxEnergyShieldLeechRate = 200
+		env.player.output.EnergyShieldRecoveryRateMod = 1
+		local calculated = copyTable(env.player.output, true)
+		calculated.EnergyShieldLeechUncappedRate = 1000
+		calculated.EnergyShieldLeechFromLifeUncappedRate = 800
+		calculated.EnergyShieldLeechDuration = 2
+		calculated.EnergyShieldLeechFromLifeDuration = 5
+		calculated.EnergyShieldLeechInstantRate = 7
+		calculated.EnergyShieldOnHitRate = 11
+		local saved = calcs.simulateSurvival
+		local captured
+		calcs.simulateSurvival = function(_, profile)
+			captured = profile
+			return { }
+		end
+		local ok, err = pcall(calcs.calcSurvival, env, {
+			{ recurring = true, skill = env.player.mainSkill, output = calculated },
+		})
+		calcs.simulateSurvival = saved
+		assert(ok, err)
+		assert.are.equal(2, #captured.leech)
+		local native = captured.leech[1].EnergyShield
+		local converted = captured.leech[2].EnergyShield
+		assert.are.equal(200, native.normal)
+		assert.are.equal(2, native.duration)
+		assert.are.equal(18, native.instant)
+		assert.are.equal(800, converted.normal)
+		assert.are.equal(5, converted.duration)
+		assert.are.equal(0, converted.instant)
+		assert.are.equal(0, captured.leech[2].Life.normal)
+		assert.are.equal(0, captured.leech[2].Mana.normal)
+	end)
+
 	it("scores recovery between configured hits and distinguishes sustaining builds", function()
 		local actor, profile = survivalFixture()
 		local baseline = calcs.simulateSurvival(actor, profile)

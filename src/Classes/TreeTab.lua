@@ -726,8 +726,12 @@ function TreeTabClass:OpenOptimizerPopup()
 			controls.profile.selIndex = index
 		end
 	end
-	controls.profile.tooltipFunc = function(tooltip)
+	controls.profile.tooltipFunc = function(tooltip, mode, index, value)
 		tooltip:Clear()
+		if mode == "OUT" then
+			return
+		end
+		tooltip:AddLine(14, value.description)
 		tooltip:AddLine(14, "Search-only snapshot: selecting a profile does not change your build's active Configuration.")
 		tooltip:AddLine(14, "Built-in profiles preserve your other build conditions; saved Configurations use all their own settings.")
 		tooltip:AddLine(14, "Mixed bosses is a hand-picked stress test, not a reconstruction of The Feared. Memory Game is excluded.")

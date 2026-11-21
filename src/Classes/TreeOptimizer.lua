@@ -178,6 +178,9 @@ function TreeOptimizer:Metrics()
 	local mode = TreeOptimizer.GetConstraintMode(self.constraints.castingHeadroom)
 	local output = self.calculate({ spec = self.spec, castingHeadroom = mode ~= 100 and mode ~= "NONE", survivability = true })
 	local dps = output[self.dpsStat]
+	if self.dpsStat == "FullDPS" and dps == nil then
+		dps = data.powerStatList.GetFromOutput(output, { stat = "FullDPS" })
+	end
 	if self.dpsStat == "CombinedDPS" and output.Minion then
 		dps = output.Minion.CombinedDPS
 	end
@@ -222,6 +225,9 @@ function TreeOptimizer:SetTargets(output)
 			end
 		elseif mode == "CAP" then
 			minimum = cap or (capStat and output[capStat]) or (minimum + output[missingStat])
+		elseif mode == "KEEP" then
+			-- Preserve the floor apart from floating-point roundoff.
+			minimum = minimum - math.abs(minimum) * 1e-9
 		end
 		if mode ~= "CAP" then
 			capStat, missingStat = nil, nil

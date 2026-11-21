@@ -1,4 +1,52 @@
 describe("TestOffence", function()
+	for _, converted in ipairs({ false, true }) do
+		it("exports uncapped leech and calculates survival"..(converted and " with Immortal Ambition" or ""), function()
+			newBuild()
+			build.skillsTab:PasteSocketGroup("Fireball 20/0  1\nLife Leech 20/0  1")
+			build.configTab.input.customMods = table.concat({
+				"+1000 to maximum Life",
+				"+1000 to maximum Energy Shield",
+				"10000% increased Spell Damage",
+				"1000% increased Cast Speed",
+				"20% increased Life Recovery rate",
+				"30% increased Energy Shield Recovery rate",
+				converted and "Immortal Ambition" or "",
+			}, "\n")
+			build.configTab.input.conditionFullLife = converted
+			build.configTab.input.conditionLeechingLife = converted
+			build.configTab:BuildModList()
+			runCallback("OnFrame")
+			local output = build.calcsTab.mainOutput
+			assert.near(1.2, output.LifeRecoveryRateMod, 1e-6)
+			assert.near(1.3, output.EnergyShieldRecoveryRateMod, 1e-6)
+			local lifeRaw = output.LifeLeechInstances * output.LifeLeechInstanceRate
+			assert(lifeRaw > 0)
+			if converted then
+				local expected = lifeRaw * output.EnergyShieldRecoveryRateMod
+				assert.are.equal(0, output.LifeLeechUncappedRate)
+				assert.are.equal(0, output.EnergyShieldLeechDuration)
+				assert(output.LifeLeechDuration > 0)
+				assert.near(expected, output.EnergyShieldLeechUncappedRate, 1e-6)
+				assert.near(expected, output.EnergyShieldLeechFromLifeUncappedRate, 1e-6)
+				assert.are.equal(output.LifeLeechDuration, output.EnergyShieldLeechFromLifeDuration)
+			else
+				assert.near(lifeRaw * output.LifeRecoveryRateMod, output.LifeLeechUncappedRate, 1e-6)
+				assert(output.LifeLeechUncappedRate > output.LifeLeechRate)
+				assert.are.equal(0, output.EnergyShieldLeechFromLifeUncappedRate)
+				assert.are.equal(0, output.EnergyShieldLeechFromLifeDuration)
+			end
+			for _, resource in ipairs({ "Life", "EnergyShield", "Mana" }) do
+				local expected = (output[resource.."LeechInstantRate"] or 0)
+					+ math.min(output[resource.."LeechUncappedRate"], output["Max"..resource.."LeechRate"] * output[resource.."RecoveryRateMod"])
+				assert.near(expected, output[resource.."LeechRate"], 1e-6)
+			end
+			local calculate = require("Modules.CalcBase").getMiscCalculator(build)
+			local result = calculate({ survivability = true })
+			assert(result.ConfiguredSurvivalTime >= 0 and result.ConfiguredSurvivalTime <= 30)
+			assert(result.ConfiguredSurvivalScore >= 0 and result.ConfiguredSurvivalScore <= 30)
+			assert(result.ConfiguredSurvivalChance >= 0 and result.ConfiguredSurvivalChance <= 100)
+		end)
+	end
 	before_each(function()
 		newBuild()
 	end)

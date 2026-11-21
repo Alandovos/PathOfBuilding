@@ -1560,6 +1560,58 @@ Adds Hollow Palm Technique]])
 		assert.same(placeholder, config.placeholder)
 	end)
 
+	it("keeps optimizer locks and blocks across tree-version restores", function()
+		build.spec.optimizerLocks[first.id] = true
+		build.spec.optimizerBlocks[alternative.id] = true
+		local state = build.spec:CreateUndoState()
+		local version = build.spec.treeVersion == "3_29" and "3_30" or "3_29"
+		build.spec:RestoreUndoState(state, version)
+		assert.are.equal(version, build.spec.treeVersion)
+		assert(build.spec.nodes[first.id] and build.spec.nodes[alternative.id])
+		assert(build.spec.optimizerLocks[first.id])
+		assert(build.spec.optimizerBlocks[alternative.id])
+	end)
+
+	it("ignores only floating-point noise when preserving maximum hits", function()
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "CombinedDPS", { maxHit = true })
+		optimizer:SetTargets(feasibleOutput())
+		assert(not optimizer:ConstraintFailure(feasibleOutput({ PhysicalMaximumHitTaken = 100 * (1 - 1e-12) })))
+		assert(optimizer:ConstraintFailure(feasibleOutput({ PhysicalMaximumHitTaken = 99.9 })))
+	end)
+
+	it("falls back to the selected skill when Full DPS has no included groups", function()
+		build.skillsTab:PasteSocketGroup("Fireball 20/0  1")
+		build.skillsTab.socketGroupList[1].includeInFullDPS = false
+		runCallback("OnFrame")
+		local optimizer = build.treeTab:CreateTreeOptimizer("DPS", 1, "FullDPS")
+		local metrics, output = optimizer:Metrics()
+		assert.is_nil(output.FullDPS)
+		assert(metrics and metrics.dps > 0)
+		assert.near(output.CombinedDPS, metrics.dps, 1e-8)
+		finish(optimizer)
+		assert(not optimizer.failed and optimizer.base.dps > 0)
+	end)
+
+	it("describes hovered optimizer profiles without accumulating tooltip lines", function()
+		build.treeTab:OpenOptimizerPopup()
+		local profile = main.popups[1].controls.profile
+		local tooltip = profile.tooltip
+		for _ = 1, 100 do
+			profile.tooltipFunc(tooltip, "HOVER", 2, profile.list[2])
+		end
+		local lines = { }
+		for _, line in ipairs(tooltip.lines) do
+			table.insert(lines, line.text)
+		end
+		assert(table.concat(lines, "\n"):find(profile.list[2].description, 1, true))
+		local count = #tooltip.lines
+		profile.tooltipFunc(tooltip, "HOVER", 2, profile.list[2])
+		assert.are.equal(count, #tooltip.lines)
+		profile.tooltipFunc(tooltip, "OUT", profile.selIndex, profile.list[profile.selIndex])
+		assert.are.equal(0, #tooltip.lines)
+		main:ClosePopup()
+	end)
+
 	it("starts simple, exposes advanced overrides and resets build-aware safety", function()
 		build.treeTab:OpenOptimizerPopup()
 		local popup = main.popups[1]

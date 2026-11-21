@@ -2468,9 +2468,9 @@ function PassiveSpecClass:CreateUndoState()
 end
 
 function PassiveSpecClass:RestoreUndoState(state, treeVersion)
+	self:ImportFromNodeList(nil, state.classId, state.ascendClassId, state.secondaryAscendClassId, state.hashList, state.hashOverrides, state.masteryEffects, treeVersion or state.treeVersion)
 	self.optimizerLocks = copyTable(state.optimizerLocks or { })
 	self.optimizerBlocks = copyTable(state.optimizerBlocks or { })
-	self:ImportFromNodeList(nil, state.classId, state.ascendClassId, state.secondaryAscendClassId, state.hashList, state.hashOverrides, state.masteryEffects, treeVersion or state.treeVersion)
 	self:SetWindowTitleWithBuildClass()
 end
 

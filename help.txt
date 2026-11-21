@@ -87,6 +87,7 @@ N/A indicates an undefined percentage, missing output, or non-finite metric. Cop
 Optimize Tree:
 
 Use "Optimize Tree" at the bottom of the Tree tab after loading a character.
+If no skill groups are included in Full DPS, that metric uses the selected skill's Combined DPS plus its minion.
 Choose what to improve and a damage profile, then press "Find a better tree".
 The default goal is "Damage AND survival - improve both". Survival means simulated mean time alive.
 No goal may reduce mean time alive below its starting value. "Survive longer" allows at most 0.5% starting-DPS loss.
